@@ -145,19 +145,7 @@ capstone_2_B/
 
 팀 역할
 
-담당	역할
 AI / Data	데이터 수집, 라벨 검증, YOLO 학습 및 성능 평가
 Backend / Video	OpenCV 영상 처리, FastAPI, AI 모델 연동
 Frontend	React 관리자 대시보드 및 위반 로그 UI
 DB / AWS	PostgreSQL, AWS EC2·S3, Docker 및 배포
-개발 진행 상황
- 프로젝트 주제 선정
- PPE 데이터셋 수집
- 안전모 / 안전조끼 라벨 검증
- YOLO 모델 학습
- 영상 실시간 탐지
- FastAPI 개발
- PostgreSQL 연동
- React 관리자 대시보드
- AWS 배포
- 최종 통합 테스트
