@@ -1,0 +1,31 @@
+# 설치된 라이브러리
+node_modules/
+.venv/
+venv/
+
+# 빌드 결과와 Python 임시 파일
+dist/
+__pycache__/
+*.pyc
+
+# 환경변수와 비밀 설정
+.env
+.env.*
+!.env.example
+
+# 실행하면서 만들어지는 DB
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
+
+# 모델과 시험 영상은 별도로 공유
+*.pt
+*.onnx
+*.mp4
+*.avi
+*.mov
+
+# 분석 결과
+runs/
+captures/
