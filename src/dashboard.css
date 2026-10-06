@@ -31,5 +31,15 @@
 @media(max-width:950px){.cctv .dashboard-grid{grid-template-columns:1fr}.cctv .event-list{max-height:500px}.cctv .date-label{display:none}}
 @media(max-width:650px){.cctv .sidebar{position:static;width:100%;padding:12px}.cctv .workspace{margin-left:0;width:100%}.cctv .brand small,.cctv .site-label,.cctv .site-name,.cctv .sidebar-bottom{display:none}.cctv nav{display:flex;margin-top:12px;gap:6px}.cctv nav button{padding:8px}.cctv header{padding:0 14px}.cctv main{padding:12px}.cctv .stats{grid-template-columns:1fr;gap:8px}.cctv .stat{padding:12px}.cctv .stat>div{width:100%}.cctv .stat strong{display:inline-block;font-size:24px;margin:4px 0}.cctv .stat div>span{display:block}.cctv .header-right{gap:8px}.cctv .modal-backdrop{padding:10px}.cctv .video-labels{font-size:9px}.cctv .playback-toolbar button{font-size:10px;padding:7px}.cctv .timeline>div{font-size:9px}}
 
+/* 76px 카드 4개 + 간격 3개 + 하단 여백까지만 표시합니다. */
+.cctv .camera-list{display:grid;grid-auto-rows:76px;gap:10px;padding:0 14px 16px;box-sizing:border-box;max-height:350px;overflow-y:auto;overscroll-behavior-y:contain;scrollbar-color:#435772 transparent}
+.cctv .camera-choice{display:flex;align-items:center;gap:12px;width:100%;height:76px;box-sizing:border-box;padding:16px 12px;background:#101a28;border:1px solid #3a4960;text-align:left;cursor:pointer}
+.cctv .camera-choice:hover:not(:disabled){background:#192b42;border-color:#78b9ff}
+.cctv .camera-choice.active{background:#213750;border-color:#78b9ff}
+.cctv .camera-choice>svg{color:#8abdf4;flex-shrink:0}
+.cctv .camera-choice-info{display:grid;gap:6px;min-width:0}
+.cctv .camera-choice-info strong{font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cctv .camera-choice-info>span{font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cctv .camera-choice-status{margin-left:auto;white-space:nowrap;font-size:11px;color:#a9c9ee}
 .sustained-warning { color: #ff9c9c; font-weight: 800; }
 .sustained-warning-banner { margin: 12px 18px; padding: 12px 14px; border: 1px solid #bd4747; border-radius: 6px; background: #461f2b; color: #ffd4d4; font-weight: 700; }

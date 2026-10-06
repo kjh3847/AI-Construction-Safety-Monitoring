@@ -14,16 +14,20 @@ import {
 import { cameras } from './data';
 import MonitorPlayer, { stateLabel } from './MonitorPlayer';
 import EventPanel from './EventPanel';
+import LoginPage from './LoginPage';
+import AccountPage from './AccountPage';
+import { API_BASE, accountRequest } from './api';
 import './styles.css';
 import './dashboard.css';
 
 // Python 서버와 React를 같은 컴퓨터에서 실행하는 기준
-const API_BASE_URL = 'http://127.0.0.1:8002';
+const API_BASE_URL = API_BASE;
 
 async function request(path, options = {}) {
   const response = await fetch(`${API_BASE_URL}${path}`, {
-    ...options, signal: AbortSignal.timeout(5000),
+    ...options, credentials: 'include', signal: AbortSignal.timeout(5000),
   });
+  if (response.status === 401) window.dispatchEvent(new Event('session-expired'));
   if (!response.ok) throw new Error(`HTTP ${response.status}`);
   return response.json();
 }
@@ -192,12 +196,12 @@ function App() {
     finally { setControlBusy(false); }
   }
 
-  function changeCamera(event) {
+  function changeCamera(cameraId) {
     const selected = cameras.find(
-      (item) => item.id === event.target.value
+      (item) => item.id === cameraId
     );
 
-    if (!selected) return;
+    if (!selected || selected.id === camera.id || controlBusy) return;
 
     setDisplayedFrame(null);
     setJump(null);
@@ -468,7 +472,6 @@ function App() {
               <div className={`dashboard-grid ${page !== 'monitor' ? 'events-only' : ''}`}>
                 {page === 'monitor' && <section className="panel monitor-panel">
                   <div className="section-title"><div><h2>현장 영상</h2><span className="muted">{camera.id} · {analysis?.source_kind === 'camera' ? '실제 카메라' : `${camera.name} (${camera.source})`}</span></div>
-                    <select aria-label="카메라 선택" value={camera.id} onChange={changeCamera} disabled={controlBusy}>{cameras.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select>
                   </div>
                   <div className="player-shell" ref={feedRef}>
                     {video ? <div className="local-preview"><video controls src={video.url} onError={() => setNotice('영상을 재생하지 못했습니다.')}/><p>로컬 파일 미리보기 · AI 분석 없음</p><button onClick={toggleFullscreen}>전체화면</button></div> :
@@ -488,10 +491,22 @@ function App() {
                   <div className="small-note">재생 화면과 인원은 같은 프레임 기준입니다. 미착용 인원은 사람·보호구 박스 위치를 연결한 추정치이며, 모호한 연결은 집계에서 제외합니다.</div>
                 </section>}
                 <div className="event-column">
-                  <EventPanel events={shown} summary={summary} connection={connection} filter={filter} setFilter={setFilter}
+                  {page === 'monitor' ? <section className="panel camera-panel" aria-labelledby="camera-panel-title">
+                    <div className="section-title"><div><h2 id="camera-panel-title"><Camera size={16}/> 카메라 전환</h2><span className="muted">확인할 영상을 선택하세요.</span></div></div>
+                    <div className="camera-list">
+                      {cameras.map((item) => <button key={item.id} type="button"
+                        className={`camera-choice ${camera.id === item.id ? 'active' : ''}`}
+                        aria-pressed={camera.id === item.id} disabled={controlBusy}
+                        onClick={() => changeCamera(item.id)}>
+                        <Camera size={22}/>
+                        <span className="camera-choice-info"><strong>{item.id} · {item.name}</strong><span>{item.source}</span></span>
+                        <span className="camera-choice-status">{camera.id === item.id ? '선택됨' : '전환'}</span>
+                      </button>)}
+                    </div>
+                  </section> : <EventPanel events={shown} summary={summary} connection={connection} filter={filter} setFilter={setFilter}
                     equipment={equipment} setEquipment={setEquipment} day={day} setDay={setDay} review={review}
                     exportCsv={exportCsv} onJump={jumpToEvent} canLoadMore={events.length >= eventLimit && eventLimit < 1000}
-                    loadMore={() => setEventLimit((value) => Math.min(value + 100, 1000))}/>
+                    loadMore={() => setEventLimit((value) => Math.min(value + 100, 1000))}/>}
                 </div>
               </div>
             </>
@@ -539,8 +554,30 @@ function Stat({ label, value, unit, detail, icon, warning }) {
   );
 }
 
+function Root() {
+  const [user, setUser] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [message, setMessage] = useState('');
+  useEffect(() => {
+    const expire = () => setUser(null);
+    window.addEventListener('session-expired', expire);
+    accountRequest('/api/auth/me').then(setUser).catch(e => setMessage(e.message)).finally(() => setLoading(false));
+    return () => window.removeEventListener('session-expired', expire);
+  }, []);
+  async function logout() {
+    try { await accountRequest('/api/auth/logout', {method:'POST'}); setUser(null); }
+    catch(e) {setMessage(e.message);}
+  }
+  if (loading) return <div className="login-page">로그인 상태 확인 중…</div>;
+  if (!user || user.must_change_password) return <LoginPage user={user} onLogin={setUser} onLogout={()=>setUser(null)}/>;
+  if (window.location.pathname === '/admin/accounts') {
+    if (user.role !== 'system') return <div className="login-page"><p>시스템팀 권한이 필요합니다. <a href="/">대시보드로 이동</a></p></div>;
+    return <AccountPage onLogout={logout}/>;
+  }
+  return <><div className="session-bar"><span>{user.employee_id}</span>{user.role === 'system' && <a href="/admin/accounts">관리자 계정 관리</a>}<button onClick={logout}>로그아웃</button>{message && <span role="status">{message}</span>}</div><App/></>;
+}
 createRoot(document.getElementById('root')).render(
   <React.StrictMode>
-    <App />
+    <Root />
   </React.StrictMode>
 );
