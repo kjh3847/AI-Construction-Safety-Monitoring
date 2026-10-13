@@ -40,20 +40,31 @@ app.add_middleware(
 # main.py와 같은 폴더에 있는 파일 사용
 BASE_DIR = Path(__file__).resolve().parent
 MODEL_PATH = BASE_DIR / "best.pt"
-VIDEO_PATH = BASE_DIR / "test.mp4"
+
+# 👇 핸드폰 3대의 IP Webcam 주소를 각각 입력합니다. (각자 핸드폰에 뜬 주소로 변경 필수)
+VIDEO_PATH_1 = "http://192.168.0.101:8080/video"  # 1번 폰 주소
+VIDEO_PATH_2 = "http://192.168.0.102:8080/video"  # 2번 폰 주소
+VIDEO_PATH_3 = "http://192.168.0.103:8080/video"  # 3번 폰 주소
 
 # 학습된 모델 불러오기
-model = YOLO(str(MODEL_PATH))
+model1 = YOLO(str(MODEL_PATH))
+model2 = YOLO(str(MODEL_PATH))
+model3 = YOLO(str(MODEL_PATH))
 
 recording_root = Path(os.getenv('MONITOR_STORAGE_DIR') or BASE_DIR / 'recordings')
 inference_lock = RLock()
-monitor = Monitor(model, MODEL_PATH, VIDEO_PATH, recording_root, inference_lock=inference_lock)
-monitor2 = Monitor(model, MODEL_PATH, BASE_DIR / 'test2.mp4', recording_root / 'CAM-02',
+
+# 👇 3개의 카메라에 각각 model1, model2, model3을 따로 배정합니다.
+monitor = Monitor(model1, MODEL_PATH, VIDEO_PATH_1, recording_root, inference_lock=inference_lock)
+monitor2 = Monitor(model2, MODEL_PATH, VIDEO_PATH_2, recording_root / 'CAM-02',
                    camera_name='CAM-02', use_camera_env=False, inference_lock=inference_lock)
+monitor3 = Monitor(model3, MODEL_PATH, VIDEO_PATH_3, recording_root / 'CAM-03',
+                   camera_name='CAM-03', use_camera_env=False, inference_lock=inference_lock)
 
 
+# 👇 생성된 3개의 카메라를 시스템 목록에 등록합니다.
 def monitors():
-    return {'CAM-01': monitor, 'CAM-02': monitor2}
+    return {'CAM-01': monitor, 'CAM-02': monitor2, 'CAM-03': monitor3}
 
 
 def select_monitor(camera_id):

@@ -247,11 +247,19 @@ class Monitor:
                         self.state = 'finished' if self.source_kind == 'test' else 'disconnected'
                         self.error = None if self.source_kind == 'test' else '카메라 영상 수신이 끊겼습니다.'
                     break
-                # Ultralytics predictor is shared by the two sources.
+                
+                # 👇 [핵심 변경 사항 1] predict 대신 track을 사용하여 BoT-SORT 추적기를 활성화합니다.
                 with self.inference_lock:
-                    result = self.model.predict(source=frame, imgsz=640, conf=0.4, device='cpu', verbose=False)[0]
-                detections = [{'class_name': result.names[int(box.cls.item())],
-                    'confidence': float(box.conf.item()), 'bbox': box.xyxy[0].tolist()} for box in result.boxes]
+                    result = self.model.track(source=frame, imgsz=640, conf=0.4, device='cpu', verbose=False, persist=True, tracker="botsort.yaml")[0]
+                
+                # 👇 [핵심 변경 사항 2] 결과에서 사람의 ID 번호(track_id)를 추출하여 기록할 데이터에 추가합니다.
+                detections = [{
+                    'class_name': result.names[int(box.cls.item())],
+                    'confidence': float(box.conf.item()),
+                    'bbox': box.xyxy[0].tolist(),
+                    'track_id': int(box.id.item()) if box.id is not None else None  # 추적 ID 저장
+                } for box in result.boxes]
+                
                 video_seconds = frame_id / fps if self.source_kind == 'test' else started - origin
                 recorder.record(detections, frame_id, video_seconds,
                     datetime.fromtimestamp(captured, timezone.utc).isoformat(timespec='milliseconds').replace('+00:00', 'Z'))

@@ -29,6 +29,7 @@ def init_db():
                 model_name TEXT,
                 confidence REAL,
                 snapshot_path TEXT,
+                track_id INTEGER
                 review_status TEXT NOT NULL DEFAULT 'pending',
                 created_at TEXT NOT NULL DEFAULT (
                     strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
