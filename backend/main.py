@@ -6,12 +6,15 @@ from datetime import date
 from contextlib import asynccontextmanager
 from threading import RLock
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, FileResponse
 from starlette.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field
 from ultralytics import YOLO
+from identity import monitor_user
+from identity_db import init_identity
+from account_server import attach_identity
 
 from database import (init_db, get_events, event_summary, review_event, get_event,
                       today_event_count, retention_seconds)
@@ -21,6 +24,7 @@ from monitor import Monitor, frame_payload
 @asynccontextmanager
 async def lifespan(app):
     init_db()
+    init_identity()
     for source in monitors().values():
         source.initialize(retention_seconds())
     try:
@@ -31,6 +35,7 @@ async def lifespan(app):
 
 
 app = FastAPI(lifespan=lifespan)
+attach_identity(app)
 app.add_middleware(
     CORSMiddleware,
     allow_origin_regex=r'http://(localhost|127\.0\.0\.1)(:\d+)?',
@@ -79,7 +84,7 @@ def event_source(row):
                  if source.camera_name == row['camera_name']), (None, None))
 
 
-@app.get('/api/events')
+@app.get('/api/events', dependencies=[Depends(monitor_user)])
 def events(limit: int = Query(100, ge=1, le=1000), offset: int = Query(0, ge=0),
            day: date | None = None, event_type: str | None = None,
            review_status: str | None = Query(None, pattern='^(pending|reviewed)$'), camera_id: str | None = None):
@@ -100,7 +105,7 @@ def event_payload(row):
             'playable': source.store.contains(row['recording_id'], row['frame_id'])}
 
 
-@app.get('/api/events/{event_id}')
+@app.get('/api/events/{event_id}', dependencies=[Depends(monitor_user)])
 def event_detail(event_id: int):
     row = get_event(event_id)
     if row is None:
@@ -108,7 +113,7 @@ def event_detail(event_id: int):
     return event_payload(row)
 
 
-@app.get('/api/events/{event_id}/snapshot')
+@app.get('/api/events/{event_id}/snapshot', dependencies=[Depends(monitor_user)])
 def event_snapshot(event_id: int):
     row = get_event(event_id)
     if not row or not row['snapshot_path']:
@@ -122,7 +127,7 @@ def event_snapshot(event_id: int):
     return FileResponse(path, media_type='image/jpeg')
 
 
-@app.patch('/api/events/{event_id}')
+@app.patch('/api/events/{event_id}', dependencies=[Depends(monitor_user)])
 def review(event_id: int):
     event = review_event(event_id)
     if event is None:
@@ -130,19 +135,19 @@ def review(event_id: int):
     return event
 
 
-@app.get('/api/status')
+@app.get('/api/status', dependencies=[Depends(monitor_user)])
 def status(camera_id: str = 'CAM-01'):
     return {**select_monitor(camera_id).status(), 'camera_id': camera_id}
 
 
-@app.post('/api/monitor/start')
+@app.post('/api/monitor/start', dependencies=[Depends(monitor_user)])
 def start_monitor(camera_id: str = 'CAM-01'):
     source = select_monitor(camera_id)
     source.start()
     return {**source.status(), 'camera_id': camera_id}
 
 
-@app.post('/api/monitor/stop')
+@app.post('/api/monitor/stop', dependencies=[Depends(monitor_user)])
 def stop_monitor(camera_id: str = 'CAM-01'):
     source = select_monitor(camera_id)
     source.stop()
@@ -153,7 +158,7 @@ class RecordingSettings(BaseModel):
     retention_seconds: int = Field(ge=30, le=1800)
 
 
-@app.patch('/api/settings')
+@app.patch('/api/settings', dependencies=[Depends(monitor_user)])
 def settings(value: RecordingSettings):
     saved = retention_seconds(value.retention_seconds)
     for source in monitors().values():
@@ -162,7 +167,7 @@ def settings(value: RecordingSettings):
     return monitor.store.bounds()
 
 
-@app.get('/api/recordings/frame')
+@app.get('/api/recordings/frame', dependencies=[Depends(monitor_user)])
 def recording_frame(at: float | None = Query(None, allow_inf_nan=False),
                     recording_id: str | None = None, frame_id: int | None = None, camera_id: str = 'CAM-01'):
     frame = select_monitor(camera_id).store.get(at=at, recording_id=recording_id, frame_id=frame_id)
@@ -171,12 +176,12 @@ def recording_frame(at: float | None = Query(None, allow_inf_nan=False),
     return frame_payload(frame)
 
 
-@app.get("/")
+@app.get("/", dependencies=[Depends(monitor_user)])
 def home():
     return {"message": "YOLO 분석 서버 실행 중"}
 
 
-@app.get('/video')
+@app.get('/video', dependencies=[Depends(monitor_user)])
 def video(camera_id: str = 'CAM-01'):
     source = select_monitor(camera_id)
     # Compatibility only: a viewer never starts or stops inference.

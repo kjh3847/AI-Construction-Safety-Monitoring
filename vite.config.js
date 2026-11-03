@@ -1,0 +1,25 @@
+import {defineConfig} from 'vite';
+
+const accountProxy = () => ({
+  target: process.env.ACCOUNTS_API_URL || 'https://safety-capstone-2026.duckdns.org',
+  changeOrigin: true,
+  secure: true,
+  configure(proxy) {
+    proxy.on('proxyRes', (response, request) => {
+      // The cloud connection keeps TLS verification. Only localhost's HTTP
+      // development proxy removes Secure from its browser-facing cookie.
+      const host = request.headers.host?.split(':')[0];
+      if (!request.socket.encrypted && ['localhost', '127.0.0.1'].includes(host)) {
+        const cookies = response.headers['set-cookie'];
+        if (cookies) response.headers['set-cookie'] = cookies.map(cookie => cookie.replace(/;\s*Secure(?=;|$)/gi, ''));
+      }
+    });
+  },
+});
+
+export default defineConfig({server:{port:5173,strictPort:true,proxy:{
+  '/api/auth': accountProxy(),
+  '/api/admin': accountProxy(),
+  '/api':'http://127.0.0.1:8002',
+  '/video':'http://127.0.0.1:8002',
+}}});

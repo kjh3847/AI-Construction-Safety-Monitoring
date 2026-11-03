@@ -254,3 +254,12 @@ __marimo__/
 # Local recovery workspace and manual DB-writing utility
 .restore-cctv-*/
 backend/test_db.py
+.venv-accounts/
+.runtime-venv/
+.test-env/
+*.exe
+*.zip
+*.7z
+*.rar
+system관리자.txt
+*관리자*계정정보*.txt

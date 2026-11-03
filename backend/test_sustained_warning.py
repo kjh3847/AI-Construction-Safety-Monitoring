@@ -61,12 +61,10 @@ class SustainedWarningTest(unittest.TestCase):
         self.assertTrue(all(row['event_reason']=='initial' for row in rows))
 
     def test_warning_api_payload_and_review_persist(self):
-        from fastapi.testclient import TestClient
-        from unittest.mock import patch
-        from main import app
+        from video_test_support import video_client
         self.run_until(0,600)
         warning = database.get_events()[0]
-        with patch('main.monitors', return_value={}), TestClient(app) as client:
+        with video_client(self.temp.name) as (main, client):
             data = client.get(f"/api/events/{warning['id']}").json()
             self.assertEqual(data['event_reason'],'sustained')
             self.assertEqual(data['sustained_seconds'],600)

@@ -49,11 +49,8 @@ class PipelineTest(unittest.TestCase):
         self.assertIsNone(database.review_event(99999))
 
     def test_api(self):
-        from fastapi.testclient import TestClient
-        from unittest.mock import patch
-        with patch.dict(os.environ, {'MONITOR_STORAGE_DIR': str(Path(self.temp.name)/'recordings')}):
-            from main import app
-        with TestClient(app) as client:
+        from video_test_support import video_client
+        with video_client(Path(self.temp.name)/'recordings') as (main, client):
             response = client.get('/api/events', headers={'Origin': 'http://127.0.0.1:5173'})
             self.assertEqual(response.headers['access-control-allow-origin'], 'http://127.0.0.1:5173')
             self.assertEqual(response.json()['summary']['total'], 1)

@@ -31,5 +31,36 @@
 @media(max-width:950px){.cctv .dashboard-grid{grid-template-columns:1fr}.cctv .event-list{max-height:500px}.cctv .date-label{display:none}}
 @media(max-width:650px){.cctv .sidebar{position:static;width:100%;padding:12px}.cctv .workspace{margin-left:0;width:100%}.cctv .brand small,.cctv .site-label,.cctv .site-name,.cctv .sidebar-bottom{display:none}.cctv nav{display:flex;margin-top:12px;gap:6px}.cctv nav button{padding:8px}.cctv header{padding:0 14px}.cctv main{padding:12px}.cctv .stats{grid-template-columns:1fr;gap:8px}.cctv .stat{padding:12px}.cctv .stat>div{width:100%}.cctv .stat strong{display:inline-block;font-size:24px;margin:4px 0}.cctv .stat div>span{display:block}.cctv .header-right{gap:8px}.cctv .modal-backdrop{padding:10px}.cctv .video-labels{font-size:9px}.cctv .playback-toolbar button{font-size:10px;padding:7px}.cctv .timeline>div{font-size:9px}}
 
+/* 76px 카드 4개 + 간격 3개 + 하단 여백까지만 표시합니다. */
+.cctv .camera-list{display:grid;grid-auto-rows:76px;gap:10px;padding:0 14px 16px;box-sizing:border-box;max-height:350px;overflow-y:auto;overscroll-behavior-y:contain;scrollbar-color:#435772 transparent}
+.cctv .camera-choice{display:flex;align-items:center;gap:12px;width:100%;height:76px;box-sizing:border-box;padding:16px 12px;background:#101a28;border:1px solid #3a4960;text-align:left;cursor:pointer}
+.cctv .camera-choice:hover:not(:disabled){background:#192b42;border-color:#78b9ff}
+.cctv .camera-choice.active{background:#213750;border-color:#78b9ff}
+.cctv .camera-choice>svg{color:#8abdf4;flex-shrink:0}
+.cctv .camera-choice-info{display:grid;gap:6px;min-width:0}
+.cctv .camera-choice-info strong{font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cctv .camera-choice-info>span{font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cctv .camera-choice-status{margin-left:auto;white-space:nowrap;font-size:11px;color:#a9c9ee}
 .sustained-warning { color: #ff9c9c; font-weight: 800; }
 .sustained-warning-banner { margin: 12px 18px; padding: 12px 14px; border: 1px solid #bd4747; border-radius: 6px; background: #461f2b; color: #ffd4d4; font-weight: 700; }
+
+/* Profile menu and server-backed logout confirmation. */
+.cctv .profile-menu{position:relative;flex-shrink:0}
+.cctv .profile-trigger{display:flex;align-items:center;justify-content:center;width:34px;height:34px;border:1px solid #435674;color:#e8f1ff;cursor:pointer;font:inherit;border-radius:50%;padding:0}
+.cctv .profile-trigger:hover,.cctv .profile-trigger[aria-expanded=true]{background:#365174;border-color:#79b9ff}
+.cctv .profile-trigger:focus-visible,.profile-actions button:focus-visible,.logout-dialog button:focus-visible{outline:2px solid #79b9ff;outline-offset:3px}
+.cctv .profile-actions{position:absolute;right:0;top:calc(100% + 10px);min-width:158px;padding:6px;border:1px solid #34445e;border-radius:9px;background:#182435;box-shadow:0 12px 30px #0006;z-index:100}
+.cctv .profile-logout{display:flex;align-items:center;gap:10px;width:100%;padding:12px;border:0;border-radius:5px;background:transparent;color:#ff858b;font-size:14px;cursor:pointer;text-align:left}
+.cctv .profile-logout:hover{background:#49232e;color:#ffb1b5}
+.logout-dialog{position:fixed;inset:0;margin:auto;width:min(420px,calc(100vw - 32px));padding:30px;border:1px solid #3a4b65;border-radius:16px;background:#172233;color:#e9f1fc;box-shadow:0 24px 80px #0009;text-align:center;max-height:calc(100dvh - 40px);overflow:auto}
+.logout-dialog::backdrop{background:#050a14b8;backdrop-filter:blur(3px)}
+.logout-symbol{display:flex;justify-content:center;align-items:center;margin:0 auto 18px;width:54px;height:54px;border-radius:50%;background:#48252e;color:#ff858b}
+.logout-dialog h2{font-size:21px;margin:0 0 12px;color:#f0f5ff;line-height:1.5}
+.logout-dialog p{font-size:14px;line-height:1.7;color:#acbbd0;margin:0 0 24px}
+.logout-dialog .logout-error{color:#ff9ca2;margin-bottom:16px}
+.logout-dialog-actions{display:flex;gap:12px}
+.logout-dialog-actions button{flex:1;border-radius:7px;padding:12px 16px;font:inherit;font-size:14px;font-weight:600;cursor:pointer}
+.logout-cancel{background:#26364c;color:#e0e9f8;border:1px solid #425571}
+.logout-confirm{background:#cb3c48;color:white;border:1px solid #df5260}
+.logout-confirm:hover{background:#e04754}.logout-cancel:hover{background:#344962}
+.logout-dialog-actions button:disabled{opacity:.6;cursor:wait}

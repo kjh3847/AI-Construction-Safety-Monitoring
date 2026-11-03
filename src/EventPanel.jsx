@@ -1,7 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Bell, Check, Download, ImageOff, X, Play } from 'lucide-react';
 import { cameras } from './data';
-const BASE = 'http://127.0.0.1:8002';
+import {API_BASE} from './api';
+const BASE = API_BASE;
 const cameraLabel = (event) => {
   const source = cameras.find((item) => item.id === (event.camera_id ?? event.camera_name));
   return source ? `${source.name} (${event.camera_name})` : event.camera_name;
@@ -62,7 +63,7 @@ export default function EventPanel({events, connection, summary, filter, setFilt
     closeRef.current?.focus();
     const refresh = async () => {
       try {
-        const response = await fetch(`${BASE}/api/events/${selected}`, {signal:AbortSignal.timeout(5000)});
+        const response = await fetch(`${BASE}/api/events/${selected}`, {credentials:'include', signal:AbortSignal.timeout(5000)});
         if (!response.ok) throw new Error();
         const data = await response.json();
         if (active) { setDetail(data); setDetailError(''); }
