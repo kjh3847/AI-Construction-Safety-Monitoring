@@ -216,6 +216,7 @@ class Monitor:
 
     def _run(self):
         cap = None
+        live_reader = None
         try:
             if isinstance(self.source, str) and self.source.startswith(('rtsp://', 'http://', 'https://')):
                 cap = cv2.VideoCapture(self.source, cv2.CAP_FFMPEG,
@@ -238,10 +239,16 @@ class Monitor:
             recorder = EventRecorder(source_id, self.model_path.name, self.source_name, camera_name=self.camera_name)
             frame_id, last_saved = 0, 0
             origin = time.monotonic()
+            if self.source_kind == 'camera':
+                from live_capture import LatestFrameReader
+                live_reader = LatestFrameReader(cap)
             while not self.stop_event.is_set():
                 started = time.monotonic()
-                success, frame = cap.read()
-                captured = time.time()
+                if live_reader is not None:
+                    success, frame, captured = live_reader.read()
+                else:
+                    success, frame = cap.read()
+                    captured = time.time()
                 if not success:
                     with self.lock:
                         self.state = 'finished' if self.source_kind == 'test' else 'disconnected'
@@ -297,7 +304,9 @@ class Monitor:
             import logging
             logging.getLogger(__name__).error('Monitor failed (%s)', type(exc).__name__)
         finally:
-            if cap is not None:
+            if live_reader is not None:
+                live_reader.close()
+            elif cap is not None:
                 cap.release()
             with self.lock:
                 if self.stop_event.is_set():

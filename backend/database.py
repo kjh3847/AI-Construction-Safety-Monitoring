@@ -29,7 +29,7 @@ def init_db():
                 model_name TEXT,
                 confidence REAL,
                 snapshot_path TEXT,
-                track_id INTEGER
+                track_id INTEGER,
                 review_status TEXT NOT NULL DEFAULT 'pending',
                 created_at TEXT NOT NULL DEFAULT (
                     strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
@@ -37,7 +37,9 @@ def init_db():
             )
         """)
         columns = {row['name'] for row in conn.execute('PRAGMA table_info(safety_events)')}
-        for name, kind in [('event_key', 'TEXT'), ('source_name', 'TEXT'), ('video_seconds', 'REAL'),
+        for name, kind in [('review_status', "TEXT NOT NULL DEFAULT 'pending'"),
+                           ('track_id', 'INTEGER'),
+                           ('event_key', 'TEXT'), ('source_name', 'TEXT'), ('video_seconds', 'REAL'),
                            ('recording_id', 'TEXT'), ('frame_id', 'INTEGER'),
                            ('detected_at', 'TEXT'), ('person_count', 'INTEGER'),
                            ('noncompliant_person_count', 'INTEGER'), ('event_person_count', 'INTEGER'),
