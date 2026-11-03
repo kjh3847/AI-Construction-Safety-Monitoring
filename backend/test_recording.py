@@ -85,30 +85,24 @@ class RecordingTest(unittest.TestCase):
         self.assertEqual(database.retention_seconds(),120)
 
     def test_api_expired_event_and_snapshot(self):
-        from fastapi.testclient import TestClient
-        import main
-        original = main.monitor
-        main.monitor = Monitor(main.model, main.MODEL_PATH, main.VIDEO_PATH, self.root/'recordings')
-        try:
-            with TestClient(main.app) as client:
-                event_id = database.save_event('CAM-01','NO-Hardhat',event_key='isolated')
-                database.attach_recording('isolated','c'*32,1,'e'*64+'.jpg')
-                (main.monitor.snapshots/('e'*64+'.jpg')).write_bytes(b'test-snapshot')
-                now = time.time()
-                main.monitor.store.add({'recording_id':'c'*32,'frame_id':1,'timestamp':now},b'frame')
-                self.assertTrue(client.get(f'/api/events/{event_id}').json()['playable'])
-                self.assertEqual(client.get(f'/api/events/{event_id}/snapshot').content,b'test-snapshot')
-                self.assertEqual(client.get('/api/recordings/frame',params={'at':now+100}).status_code,410)
-                main.monitor.store.prune(now=now+301)
-                self.assertFalse(client.get(f'/api/events/{event_id}').json()['playable'])
-                self.assertEqual(client.get('/api/recordings/frame').status_code,410)
-                self.assertEqual(client.patch('/api/settings',json={'retention_seconds':1}).status_code,422)
-                self.assertEqual(client.patch('/api/settings',json={'retention_seconds':60}).status_code,200)
-                self.assertEqual(database.retention_seconds(),60)
-                client.patch(f'/api/events/{event_id}')
-                self.assertEqual(client.get(f'/api/events/{event_id}').json()['review_status'],'reviewed')
-        finally:
-            main.monitor = original
+        from video_test_support import video_client
+        with video_client(self.root/'recordings') as (main, client):
+            event_id = database.save_event('CAM-01','NO-Hardhat',event_key='isolated')
+            database.attach_recording('isolated','c'*32,1,'e'*64+'.jpg')
+            (main.monitor.snapshots/('e'*64+'.jpg')).write_bytes(b'test-snapshot')
+            now = time.time()
+            main.monitor.store.add({'recording_id':'c'*32,'frame_id':1,'timestamp':now},b'frame')
+            self.assertTrue(client.get(f'/api/events/{event_id}').json()['playable'])
+            self.assertEqual(client.get(f'/api/events/{event_id}/snapshot').content,b'test-snapshot')
+            self.assertEqual(client.get('/api/recordings/frame',params={'at':now+100}).status_code,410)
+            main.monitor.store.prune(now=now+301)
+            self.assertFalse(client.get(f'/api/events/{event_id}').json()['playable'])
+            self.assertEqual(client.get('/api/recordings/frame').status_code,410)
+            self.assertEqual(client.patch('/api/settings',json={'retention_seconds':1}).status_code,422)
+            self.assertEqual(client.patch('/api/settings',json={'retention_seconds':60}).status_code,200)
+            self.assertEqual(database.retention_seconds(),60)
+            client.patch(f'/api/events/{event_id}')
+            self.assertEqual(client.get(f'/api/events/{event_id}').json()['review_status'],'reviewed')
 
 
 if __name__ == '__main__':

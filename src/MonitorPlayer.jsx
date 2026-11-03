@@ -1,7 +1,8 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Play, Pause, SkipBack, SkipForward, Radio, Maximize, PanelRightClose, PanelRightOpen } from 'lucide-react';
 
-const BASE = 'http://127.0.0.1:8002';
+import {API_BASE} from './api';
+const BASE = API_BASE;
 const timeLabel = (timestamp) => timestamp == null ? '—' : new Date(timestamp * 1000).toLocaleTimeString('ko-KR');
 export const stateLabel = {idle:'감지 대기', starting:'연결 중', running:'감지 중', stopping:'감지 종료 중', stopped:'감지 중단', finished:'테스트 영상 종료', disconnected:'카메라 연결 끊김', error:'감지 오류'};
 
@@ -78,7 +79,7 @@ export default function MonitorPlayer({ cameraId, status, connection, enabled, o
       previousClock = now;
       try {
         const response = await fetch(`${BASE}/api/recordings/frame?camera_id=${cameraId}${at == null ? '' : `&at=${at}`}`, {
-          signal: AbortSignal.any([controller.signal, AbortSignal.timeout(5000)]), cache:'no-store',
+          credentials:'include', signal: AbortSignal.any([controller.signal, AbortSignal.timeout(5000)]), cache:'no-store',
         });
         if (!response.ok) throw new Error(response.status === 410 ? '재생 가능한 영상 없음 · 보관 범위를 다시 선택하세요.' : '영상 조회 실패');
         const data = await response.json();

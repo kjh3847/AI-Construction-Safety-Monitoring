@@ -1,0 +1,7 @@
+# Manual deployment reference only; not executed during integration.
+# Run from the repository root after a separate deployment review.
+# Replace placeholders with the existing EC2 host and your SSH key path.
+scp -i <SSH_KEY_PATH> backend/account_server.py backend/identity.py backend/identity_db.py backend/bootstrap_system.py backend/requirements-accounts.txt ubuntu@<EXISTING_EC2_HOST>:/home/ubuntu/safety-api/
+# Preserve existing server secrets and back up code before deployment.
+# Never upload .env, account documents, DB passwords, Brevo keys or DuckDNS tokens.
+# This replaces the embedded ZIP of obsolete API code with explicit current files.

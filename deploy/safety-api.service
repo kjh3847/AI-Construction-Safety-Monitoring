@@ -1,0 +1,15 @@
+[Unit]
+Description=Safety Account API
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+User=ubuntu
+WorkingDirectory=/home/ubuntu/safety-api
+EnvironmentFile=/home/ubuntu/safety-api/.env
+ExecStart=/home/ubuntu/safety-api/.venv/bin/python -m uvicorn account_server:app --host 127.0.0.1 --port 8000
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
