@@ -80,7 +80,7 @@ class RecordingTest(unittest.TestCase):
         self.assertEqual({row['created_at'] for row in rows}, {'2026-09-21T15:00:00.000Z','2026-09-22T14:59:59.999Z'})
         database.review_event(rows[0]['id'])
         self.assertEqual(len(database.get_events(day=date(2026,9,22),review_status='reviewed')),1)
-        self.assertEqual(database.retention_seconds(),300)
+        self.assertEqual(database.retention_seconds(),30 * 86400)
         self.assertEqual(database.retention_seconds(120),120)
         self.assertEqual(database.retention_seconds(),120)
 
@@ -95,14 +95,59 @@ class RecordingTest(unittest.TestCase):
             self.assertTrue(client.get(f'/api/events/{event_id}').json()['playable'])
             self.assertEqual(client.get(f'/api/events/{event_id}/snapshot').content,b'test-snapshot')
             self.assertEqual(client.get('/api/recordings/frame',params={'at':now+100}).status_code,410)
-            main.monitor.store.prune(now=now+301)
+            main.monitor.store.prune(now=now+30*86400+1)
             self.assertFalse(client.get(f'/api/events/{event_id}').json()['playable'])
             self.assertEqual(client.get('/api/recordings/frame').status_code,410)
             self.assertEqual(client.patch('/api/settings',json={'retention_seconds':1}).status_code,422)
+            self.assertEqual(client.patch('/api/settings',json={'retention_seconds':30*86400+1}).status_code,422)
+            self.assertEqual(client.patch('/api/settings',json={'retention_seconds':30*86400}).status_code,200)
             self.assertEqual(client.patch('/api/settings',json={'retention_seconds':60}).status_code,200)
             self.assertEqual(database.retention_seconds(),60)
             client.patch(f'/api/events/{event_id}')
             self.assertEqual(client.get(f'/api/events/{event_id}').json()['review_status'],'reviewed')
+
+    def test_month_retention_survives_restart_without_old_capacity_limit(self):
+        root = self.root/'month'
+        root.mkdir()
+        now = time.time()
+        for frame_id, age, size in [(1,29,257*1024*1024),(2,31,10)]:
+            stem = root/f"{'a'*32}_{frame_id}"
+            with stem.with_suffix('.jpg').open('wb') as stream:
+                stream.truncate(size)
+            stem.with_suffix('.json').write_text(json.dumps({
+                'recording_id':'a'*32, 'frame_id':frame_id,
+                'timestamp':now-age*86400}),encoding='utf-8')
+        store = FrameStore(root)
+        self.assertTrue(store.contains('a'*32,1))
+        self.assertFalse(store.contains('a'*32,2))
+        self.assertFalse(store.capacity_limited)
+        self.assertIsNone(store.max_bytes)
+        self.assertTrue(FrameStore(root).contains('a'*32,1))
+
+    def test_snapshots_follow_month_retention(self):
+        import os
+        monitor = Monitor(None, self.root/'model.pt', self.root/'test.mp4', self.root/'snapshots-test')
+        now=time.time()
+        paths=[]
+        for character, age in [('a',29),('b',31)]:
+            path=monitor.snapshots/(character*64+'.jpg')
+            path.write_bytes(b'jpeg')
+            os.utime(path,(now-age*86400,now-age*86400))
+            paths.append(path)
+        monitor._cleanup_snapshots()
+        self.assertTrue(paths[0].exists())
+        self.assertFalse(paths[1].exists())
+
+    def test_low_disk_space_does_not_delete_recent_frames(self):
+        from collections import namedtuple
+        store=FrameStore(self.root/'disk')
+        meta={'recording_id':'f'*32,'frame_id':1,'timestamp':time.time()}
+        store.add(meta,b'original')
+        usage=namedtuple('Usage','total used free')(100,99,1)
+        with patch('monitor.shutil.disk_usage',return_value=usage):
+            with self.assertRaises(OSError):
+                store.add({**meta,'frame_id':2},b'new')
+        self.assertEqual(store.get(recording_id='f'*32,frame_id=1)[1],b'original')
 
 
 if __name__ == '__main__':

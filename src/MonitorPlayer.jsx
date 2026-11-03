@@ -3,7 +3,8 @@ import { Play, Pause, SkipBack, SkipForward, Radio, Maximize, PanelRightClose, P
 
 import {API_BASE} from './api';
 const BASE = API_BASE;
-const timeLabel = (timestamp) => timestamp == null ? '—' : new Date(timestamp * 1000).toLocaleTimeString('ko-KR');
+const timeLabel = (timestamp) => timestamp == null ? '—' : new Date(timestamp * 1000).toLocaleString('ko-KR');
+const durationLabel = (seconds) => seconds >= 86400 ? `${(seconds / 86400).toFixed(1).replace(/\.0$/, '')}일` : seconds >= 60 ? `${Math.floor(seconds / 60)}분 ${Math.floor(seconds % 60)}초` : `${Math.floor(seconds)}초`;
 export const stateLabel = {idle:'감지 대기', starting:'연결 중', running:'감지 중', stopping:'감지 종료 중', stopped:'감지 중단', finished:'테스트 영상 종료', disconnected:'카메라 연결 끊김', error:'감지 오류'};
 
 export default function MonitorPlayer({ cameraId, status, connection, enabled, onFrame, jump, expanded, onExpand, onFullscreen, isFullscreen }) {
@@ -150,7 +151,7 @@ export default function MonitorPlayer({ cameraId, status, connection, enabled, o
       <input aria-label="저장된 영상 시간 탐색" type="range" min={bounds?.start ?? 0} max={bounds?.end ?? 0} step="0.05"
         value={available ? Math.max(bounds.start, Math.min(position ?? bounds.end, bounds.end)) : 0}
         disabled={!available || !enabled} onChange={(event) => seek(event.target.value)}/>
-      <div><span>{timeLabel(bounds?.start)}</span><span>저장 구간 {available ? Math.floor(bounds.end - bounds.start) : 0}초 / 보관 설정 {bounds?.retention_seconds ?? 300}초</span><span>{timeLabel(bounds?.end)}</span></div>
+      <div><span>{timeLabel(bounds?.start)}</span><span>저장 구간 {durationLabel(available ? bounds.end - bounds.start : 0)} / 보관 설정 {durationLabel(bounds?.retention_seconds ?? 30 * 86400)}</span><span>{timeLabel(bounds?.end)}</span></div>
       {bounds?.capacity_limited && <p className="signal-caution">용량 한도로 실제 보관 구간이 설정 시간보다 짧을 수 있습니다.</p>}
     </div>
   </>;

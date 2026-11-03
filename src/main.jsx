@@ -62,7 +62,7 @@ function App({onLogout, user}) {
   const [displayedFrame, setDisplayedFrame] = useState(null);
   const [expanded, setExpanded] = useState(false);
   const [jump, setJump] = useState(null);
-  const [retention, setRetention] = useState(300);
+  const [retention, setRetention] = useState(30 * 86400);
   const [controlBusy, setControlBusy] = useState(false);
 
   const [filter, setFilter] = useState('all');
@@ -311,7 +311,7 @@ function App({onLogout, user}) {
       const result = await request('/api/settings', {method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({retention_seconds:Number(retention)})});
       setRetention(result.retention_seconds);
       setNotice('영상 보관 설정을 DB에 저장했습니다.');
-    } catch { setNotice('보관 설정 저장 실패 · 30~1800초 범위와 서버 연결을 확인하세요.'); }
+    } catch { setNotice('보관 설정 저장 실패 · 1~30일 범위와 서버 연결을 확인하세요.'); }
   }
 
   async function jumpToEvent(event) {
@@ -427,11 +427,11 @@ function App({onLogout, user}) {
           {page === 'settings' ? (
             <section className="panel settings">
               <h2>영상 보관 설정</h2>
-              <p>최근 5분이 기본입니다. 실제 저장된 구간만 탐색할 수 있으며, 오래된 영상은 자동 정리됩니다.</p>
-              <label htmlFor="retention">영상 보관 시간 (30~1800초)</label>
-              <input id="retention" type="number" min="30" max="1800" value={retention} onChange={(event) => setRetention(event.target.value)}/>
+              <p>기본 보관 기간은 30일입니다. 서버를 재시작해도 파일은 유지되며, 보관 기간이 지난 영상은 자동 정리됩니다.</p>
+              <label htmlFor="retention">영상 보관 기간 (1~30일)</label>
+              <input id="retention" type="number" min="1" max="30" step="1" value={retention / 86400} onChange={(event) => setRetention(Number(event.target.value) * 86400)}/>
               <button className="primary" onClick={saveRetention}>영상 보관 설정 저장</button>
-              <p className="muted">용량 상한 256MB. 스냅샷은 최대 7일·512MB 보관합니다. 기간을 줄이면 이전 구간은 만료됩니다.</p>
+              <p className="muted">감지 영상 프레임과 스냅샷에 같은 보관 기간을 적용합니다. 기존 용량 상한에 따른 조기 삭제는 하지 않습니다. 디스크 여유 공간이 1GB 미만이면 새 녹화를 중단합니다. 기간을 줄이면 이전 구간은 만료됩니다.</p>
               <h2>미착용 알림 기준</h2>
               <p>
                 미착용 의심 상태가 지속되는 시간을 설정합니다.

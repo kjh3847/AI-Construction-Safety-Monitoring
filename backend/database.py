@@ -6,6 +6,7 @@ from datetime import datetime, time, timedelta, timezone
 
 # 실행 위치가 달라도 항상 backend에 저장
 DB_PATH = Path(__file__).resolve().parent / "safety.db"
+DEFAULT_RETENTION_SECONDS = 30 * 86400
 
 
 @contextmanager
@@ -175,7 +176,7 @@ def retention_seconds(value=None):
         if value is not None:
             conn.execute("INSERT INTO monitor_settings VALUES ('retention_seconds', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (value,))
         row = conn.execute("SELECT value FROM monitor_settings WHERE key='retention_seconds'").fetchone()
-        return row[0] if row else 300
+        return row[0] if row else DEFAULT_RETENTION_SECONDS
 
 
 def review_event(event_id):

@@ -155,7 +155,7 @@ def stop_monitor(camera_id: str = 'CAM-01'):
 
 
 class RecordingSettings(BaseModel):
-    retention_seconds: int = Field(ge=30, le=1800)
+    retention_seconds: int = Field(ge=30, le=30 * 86400)
 
 
 @app.patch('/api/settings', dependencies=[Depends(monitor_user)])

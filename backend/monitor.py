@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 from threading import Event, RLock, Thread
 import time
 import uuid
@@ -14,12 +15,13 @@ import uuid
 import cv2
 
 from database import attach_recording, get_connection, fill_event_counts
+from database import DEFAULT_RETENTION_SECONDS
 from event_recorder import EventRecorder
 from person_safety import associate_people, event_counts, ASSOCIATION_METHOD
 
 
 class FrameStore:
-    def __init__(self, root, retention=300, max_bytes=256 * 1024 * 1024):
+    def __init__(self, root, retention=DEFAULT_RETENTION_SECONDS, max_bytes=None):
         self.root = Path(root).resolve()
         self.root.mkdir(parents=True, exist_ok=True)
         self.retention = retention
@@ -59,8 +61,9 @@ class FrameStore:
                 self.bytes -= size
                 del self.pending_deletes[path]
             cutoff = (time.time() if now is None else now) - self.retention
-            while self.frames and (self.frames[0]['timestamp'] < cutoff or self.bytes + reserve > self.max_bytes):
-                if self.bytes + reserve > self.max_bytes:
+            while self.frames and (self.frames[0]['timestamp'] < cutoff or
+                                   (self.max_bytes is not None and self.bytes + reserve > self.max_bytes)):
+                if self.max_bytes is not None and self.bytes + reserve > self.max_bytes:
                     self.capacity_limited = True
                 frame = self.frames.popleft()
                 path = self._path(frame)
@@ -77,9 +80,11 @@ class FrameStore:
     def add(self, meta, jpeg):
         with self.lock:
             self.prune(reserve=len(jpeg))
-            if self.bytes + len(jpeg) > self.max_bytes or len(self.pending_deletes) > 10000:
+            if (self.max_bytes is not None and self.bytes + len(jpeg) > self.max_bytes) or len(self.pending_deletes) > 10000:
                 self.capacity_limited = True
                 return False
+            if shutil.disk_usage(self.root).free < len(jpeg) + 1024 * 1024 * 1024:
+                raise OSError('Insufficient free disk space for recording')
             path = self._path(meta)
             path.write_bytes(jpeg)
             path.with_suffix('.json').write_text(json.dumps(meta), encoding='utf-8')
@@ -174,10 +179,8 @@ class Monitor:
     def _cleanup_snapshots(self):
             files = sorted((p for p in self.snapshots.glob('*.jpg')
                             if re.fullmatch(r'[a-f0-9]{64}\.jpg', p.name)), key=lambda p: p.stat().st_mtime)
-            total = sum(p.stat().st_size for p in files)
             for path in files:
-                if path.stat().st_mtime < time.time() - 7 * 86400 or total > 512 * 1024 * 1024:
-                    total -= path.stat().st_size
+                if path.stat().st_mtime < time.time() - self.store.retention:
                     path.unlink(missing_ok=True)
 
     def start(self):
@@ -300,7 +303,9 @@ class Monitor:
             with self.lock:
                 self.state = 'error'
                 # Avoid returning camera URLs / credentials in exception text.
-                self.error = '영상 감지 또는 저장에 실패했습니다. 서버 로그와 소스 연결을 확인하세요.'
+                self.error = ('영상 저장에 실패했습니다. 디스크 여유 공간과 저장 폴더 권한을 확인하세요.'
+                              if isinstance(exc, OSError) else
+                              '영상 감지 또는 저장에 실패했습니다. 서버 로그와 소스 연결을 확인하세요.')
             import logging
             logging.getLogger(__name__).error('Monitor failed (%s)', type(exc).__name__)
         finally:
