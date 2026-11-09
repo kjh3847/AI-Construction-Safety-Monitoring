@@ -34,11 +34,21 @@ def origin_allowed(origin, configured):
         return False
 
 
-def attach_identity(app):
-    app.include_router(router)
+def attach_identity(app, local_demo=False):
+    if local_demo:
+        from local_demo import router as demo_router
+        app.include_router(demo_router)
+    else:
+        app.include_router(router)
 
     @app.middleware('http')
     async def check_origin(request: Request, call_next):
+        if local_demo:
+            from local_demo import check_peer
+            try:
+                check_peer(request)
+            except Exception:
+                return JSONResponse({'detail':'로컬 데모는 이 PC에서만 사용할 수 있습니다.'},status_code=403)
         if request.method in ('POST', 'PATCH', 'PUT', 'DELETE'):
             allowed = os.getenv('PUBLIC_APP_URL', '').rstrip('/')
             if not origin_allowed(request.headers.get('origin', ''), allowed):

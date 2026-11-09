@@ -20,6 +20,6 @@ const accountProxy = () => ({
 export default defineConfig({server:{port:5173,strictPort:true,proxy:{
   '/api/auth': accountProxy(),
   '/api/admin': accountProxy(),
-  '/api':'http://127.0.0.1:8002',
-  '/video':'http://127.0.0.1:8002',
+  '/api':{target:process.env.MONITOR_API_URL || 'http://127.0.0.1:8002',ws:true},
+  '/video':process.env.MONITOR_API_URL || 'http://127.0.0.1:8002',
 }}});

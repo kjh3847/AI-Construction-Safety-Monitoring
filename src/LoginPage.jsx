@@ -2,7 +2,7 @@ import React, {useState} from 'react';
 import {ShieldCheck} from 'lucide-react';
 import {accountRequest} from './api';
 import './login.css';
-export default function LoginPage({onLogin,user,onLogout}) {
+export default function LoginPage({onLogin,user,onLogout,localDemo=false}) {
   const [id,setId]=useState(''),[password,setPassword]=useState(''),[message,setMessage]=useState('');
   const [changing,setChanging]=useState(Boolean(user)),[next,setNext]=useState(''),[confirm,setConfirm]=useState(''),[busy,setBusy]=useState(false);
   async function submit(e){
@@ -20,9 +20,15 @@ export default function LoginPage({onLogin,user,onLogout}) {
       }
     }catch(error){setMessage(error.message);}finally{setBusy(false);}
   }
+  async function enterDemo(){
+    setBusy(true);setMessage('');
+    try {onLogin(await accountRequest('/api/auth/local-demo',{method:'POST'}));}
+    catch(error){setMessage(error.message);} finally {setBusy(false);}
+  }
   return <div className="login-page"><section className="login-card">
     <div className="login-brand"><ShieldCheck size={36}/><span>현장지킴</span></div>
     <h1>{changing?'비밀번호 변경':'관리자 로그인'}</h1><p className="login-description">{user?.must_change_password?'처음 로그인했습니다. 임시 비밀번호를 변경하세요.':'회사에서 발급받은 사원번호로 로그인하세요.'}</p>
+    {localDemo && <div className="local-demo-entry"><p>계정 DB가 없는 로컬 데모입니다. 기존 회사 계정은 사용하지 않습니다.</p><button className="login-submit" onClick={enterDemo} disabled={busy}>로컬 데모로 대시보드 보기</button><p>비밀번호 없이 관제 화면을 확인할 수 있습니다. 카메라 영상은 설정한 입력만 표시합니다.</p></div>}
     <form className="login-form" onSubmit={submit}>
       {!user&&<label className="login-field">사원번호<input autoComplete="username" value={id} onChange={e=>setId(e.target.value)} required maxLength={32}/></label>}
       <label className="login-field">{changing?'현재 비밀번호':'비밀번호'}<input type="password" autoComplete="current-password" value={password} onChange={e=>setPassword(e.target.value)} required maxLength={128}/></label>

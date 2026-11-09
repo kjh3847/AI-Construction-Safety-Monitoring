@@ -1,0 +1,32 @@
+[
+  {
+    "model": "osnet_x0_25.onnx",
+    "sha256": "352f1a46b054d503568f9b0bbabf5653712cc2aee71f6106bc71cff6ef9348bd",
+    "bytes": 891549,
+    "provider": "CPUExecutionProvider",
+    "intra_op_threads": 1,
+    "load_and_first_inference_ms": 233.491,
+    "crop_inference_median_ms": 12.625,
+    "cpu_ms_per_crop": 13.021,
+    "process_rss_bytes": 85794816,
+    "input": "synthetic RGB texture; no real identity labels",
+    "shape": [
+      512
+    ]
+  },
+  {
+    "model": "osnet_x1_0.onnx",
+    "sha256": "5a823d544c7bec2fc0d9482d1a1c34c5b89233d0dd3764202465274d04782e85",
+    "bytes": 8729490,
+    "provider": "CPUExecutionProvider",
+    "intra_op_threads": 1,
+    "load_and_first_inference_ms": 569.792,
+    "crop_inference_median_ms": 576.261,
+    "cpu_ms_per_crop": 555.208,
+    "process_rss_bytes": 107233280,
+    "input": "synthetic RGB texture; no real identity labels",
+    "shape": [
+      512
+    ]
+  }
+]

@@ -1,0 +1,24 @@
+{
+  "environment": {
+    "os": "Windows-11-10.0.26200-SP0",
+    "python": "3.14.5",
+    "opencv": "5.0.0",
+    "cpu": "Intel64 Family 6 Model 151 Stepping 5, GenuineIntel",
+    "logical_cpus": 12
+  },
+  "synthetic": true,
+  "transport": {
+    "jpeg_bytes": 155064,
+    "json_base64_bytes": 207760,
+    "binary_bytes": 155924,
+    "json_base64_median_ms": 0.7698,
+    "binary_median_ms": 0.0124
+  },
+  "dvr_1000_frames": {
+    "legacy_restart_python_peak_bytes": 7347971,
+    "indexed_restart_python_peak_bytes": 4583,
+    "legacy_exact_lookup_median_ms": 0.8095,
+    "indexed_exact_lookup_median_ms": 2.0136
+  },
+  "limitations": "No best.pt, phone network, GPU, OSNet weights, or 24h soak; no production FPS/accuracy claim."
+}

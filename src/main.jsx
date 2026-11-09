@@ -12,7 +12,7 @@ import {
 } from 'lucide-react';
 
 import { cameras } from './data';
-import MonitorPlayer, { stateLabel } from './MonitorPlayer';
+import MultiCameraMonitor from './MultiCameraMonitor';
 import EventPanel from './EventPanel';
 import LoginPage from './LoginPage';
 import AccountPage from './AccountPage';
@@ -51,30 +51,28 @@ function read(key, fallback) {
 
 function App({onLogout, user}) {
   const [page, setPage] = useState('monitor');
-  const [camera, setCamera] = useState(cameras[0]);
 
   const [events, setEvents] = useState([]);
   const [summary, setSummary] = useState(null);
-  const [analysis, setAnalysis] = useState(null);
+  const [totals,setTotals] = useState({people:0,violations:0,active:0});
   const [connection, setConnection] = useState('loading');
   const [eventLimit, setEventLimit] = useState(100);
   const [day, setDay] = useState('');
-  const [displayedFrame, setDisplayedFrame] = useState(null);
-  const [expanded, setExpanded] = useState(false);
   const [jump, setJump] = useState(null);
   const [retention, setRetention] = useState(30 * 86400);
-  const [controlBusy, setControlBusy] = useState(false);
 
   const [filter, setFilter] = useState('all');
   const [equipment, setEquipment] = useState('all');
   const [video, setVideo] = useState(null);
   const [notice, setNotice] = useState('');
 
-  const eventQuery = `/api/events?limit=${eventLimit}${page === 'monitor' ? `&camera_id=${camera.id}` : ''}${day ? `&day=${day}` : ''}${equipment !== 'all' ? `&event_type=${encodeURIComponent(equipment)}` : ''}${filter !== 'all' ? `&review_status=${filter}` : ''}`;
+  const eventQuery = `/api/events?limit=${eventLimit}${day ? `&day=${day}` : ''}${equipment !== 'all' ? `&event_type=${encodeURIComponent(equipment)}` : ''}${filter !== 'all' ? `&review_status=${filter}` : ''}`;
 
   useEffect(() => {
-    if (analysis?.buffer) setRetention(analysis.buffer.retention_seconds);
-  }, [analysis?.buffer?.retention_seconds]);
+    let active=true;
+    request('/api/status').then(s => {if(active) setRetention(s.buffer.retention_seconds);}).catch(()=>{});
+    return () => {active=false;};
+  },[]);
 
   const [seconds, setSeconds] = useState(() => {
     const value = Number(read('safety.seconds.v1', 5));
@@ -82,46 +80,16 @@ function App({onLogout, user}) {
   });
 
   const fileRef = useRef(null);
-  const feedRef = useRef(null);
-  const [isFullscreen, setIsFullscreen] = useState(false);
-
-  useEffect(() => {
-    const syncFullscreen = () => {
-      setIsFullscreen(Boolean(feedRef.current) && document.fullscreenElement === feedRef.current);
-    };
-    document.addEventListener('fullscreenchange', syncFullscreen);
-    return () => document.removeEventListener('fullscreenchange', syncFullscreen);
-  }, []);
-
-  async function toggleFullscreen() {
-    try {
-      if (document.fullscreenElement === feedRef.current) {
-        await document.exitFullscreen();
-      } else if (feedRef.current?.requestFullscreen) {
-        await feedRef.current.requestFullscreen();
-      } else {
-        setNotice('이 브라우저에서는 전체화면 기능을 지원하지 않습니다.');
-      }
-    } catch {
-      setNotice('전체화면을 열지 못했습니다. 브라우저에서 다시 시도해 주세요.');
-    }
-  }
-
-  const isTestCamera = cameras.some((item) => item.id === camera.id);
-
   useEffect(() => {
     let active = true;
     let timer;
     setConnection('loading');
     async function refresh() {
       try {
-        const [data, status] = await Promise.all([
-          request(eventQuery), request(`/api/status?camera_id=${camera.id}`),
-        ]);
+        const data = await request(eventQuery);
         if (!active) return;
         setEvents(data.events.map(displayEvent));
         setSummary(data.summary);
-        setAnalysis(status);
         setConnection('ready');
       } catch {
         if (active) setConnection('error');
@@ -131,7 +99,7 @@ function App({onLogout, user}) {
     }
     refresh();
     return () => { active = false; clearTimeout(timer); };
-  }, [eventQuery, camera.id]);
+  }, [eventQuery]);
 
   useEffect(() => {
     return () => {
@@ -149,9 +117,6 @@ function App({onLogout, user}) {
   }, [notice]);
 
   const pending = connection === 'ready' ? summary?.pending ?? 0 : 0;
-  const historical = displayedFrame?.mode === 'past' || displayedFrame?.paused;
-  const validFrame = connection === 'ready' && isTestCamera && analysis?.camera_id === camera.id && !video && displayedFrame &&
-    (historical || (analysis?.state === 'running' && displayedFrame.recording_id === analysis.recording_id && Date.now()/1000 - displayedFrame.timestamp < 10));
   const connectionText = connection === 'loading' ? '데이터 로딩 중'
     : connection === 'error' ? '서버 연결 실패 · 마지막 조회 기록 (자동 재시도 중)'
     : 'DB 연결됨 · 2초마다 갱신';
@@ -176,40 +141,6 @@ function App({onLogout, user}) {
   function changePage(nextPage) {
     // Viewing navigation does not stop server-side inference/recording.
     setPage(nextPage);
-  }
-
-  async function startAnalysis() {
-    setVideo(null);
-    setControlBusy(true);
-    try {
-      setAnalysis(await request(`/api/monitor/start?camera_id=${camera.id}`, {method:'POST'}));
-      setNotice('서버 감지와 녹화를 시작했습니다. 화면 일시정지와 관계없이 계속됩니다.');
-    } catch { setNotice('감지 시작 요청 실패 · 서버 연결을 확인하세요.'); }
-    finally { setControlBusy(false); }
-  }
-
-  async function stopAnalysis() {
-    setControlBusy(true);
-    try {
-      setAnalysis(await request(`/api/monitor/stop?camera_id=${camera.id}`, {method:'POST'}));
-      setNotice('서버 감지·녹화 중단을 요청했습니다. 저장된 구간은 보관 기간 내 재생 가능합니다.');
-    } catch { setNotice('감지 중단 요청 실패'); }
-    finally { setControlBusy(false); }
-  }
-
-  function changeCamera(cameraId) {
-    const selected = cameras.find(
-      (item) => item.id === cameraId
-    );
-
-    if (!selected || selected.id === camera.id || controlBusy) return;
-
-    setDisplayedFrame(null);
-    setJump(null);
-    setAnalysis(null);
-    setConnection('loading');
-    setVideo(null);
-    setCamera(selected);
   }
 
   async function review(id) {
@@ -239,7 +170,6 @@ function App({onLogout, user}) {
       return;
     }
 
-    setDisplayedFrame(null);
 
     setVideo({
       url: URL.createObjectURL(file),
@@ -319,15 +249,14 @@ function App({onLogout, user}) {
       const selected = cameras.find((item) => item.id === (event.camera_id ?? event.camera_name));
       if (!selected) throw new Error('연결된 영상 없음');
       const frame = await request(`/api/recordings/frame?camera_id=${selected.id}&recording_id=${event.recording_id}&frame_id=${event.frame_id}`);
-      if (selected.id !== camera.id) { setDisplayedFrame(null); setAnalysis(null); setConnection('loading'); }
-      setVideo(null); setCamera(selected); setPage('monitor');
-      setJump({timestamp:frame.timestamp, nonce:Date.now()});
+      setVideo(null); setPage('monitor');
+      setJump({timestamp:frame.timestamp, cameraId:selected.id, nonce:Date.now()});
       return true;
     } catch { setNotice('재생 가능한 영상 없음 · 녹화 보관 범위를 벗어났습니다.'); return false; }
   }
 
   return (
-    <div className={`app cctv ${expanded ? 'expanded' : ''}`}>
+    <div className="app cctv">
       <aside className="sidebar">
         <a
           className="brand"
@@ -388,7 +317,7 @@ function App({onLogout, user}) {
           </span>
 
           <div className="header-right">
-            <span className="demo-dot">{connection !== 'ready' ? connectionText : `${analysis?.source_kind === 'camera' ? '실제 카메라' : '테스트 영상'} · ${stateLabel[analysis?.state] ?? '대기'}`}</span>
+            <span className="demo-dot">{connection !== 'ready' ? connectionText : `3대 동시 관제 · 실시간 수신 ${totals.active}/3대`}</span>
 
             <button
               className="icon-btn"
@@ -460,56 +389,21 @@ function App({onLogout, user}) {
             </section>
           ) : (
             <>
-              {page === 'monitor' && <div className="stats">
-                <Stat label={historical ? '재생 시점 감지 인원' : '현재 감지 인원'}
-                  value={validFrame ? displayedFrame.person_count : '—'} unit="명"
-                  detail={validFrame ? '해당 프레임 Person 검출 · 누적 인원 아님' : connection !== 'ready' ? connectionText : '감지 중인 영상이 없거나 수신 중단'} icon={<Camera/>}/>
-                <Stat label={historical ? '재생 시점 미착용 인원 (추정)' : '보호구 미착용 인원 (추정)'}
-                  value={validFrame ? displayedFrame.noncompliant_person_count ?? '—' : '—'} unit="명"
-                  detail={!validFrame ? '영상 수신 후 표시' : displayedFrame.noncompliant_person_count == null ? '이 프레임의 사람 연결 정보 없음' : displayedFrame.unassigned_negative_count > 0 ? `사람 연결 불가 ${displayedFrame.unassigned_negative_count}건 · 인원 집계에서 제외` : '사람별 공간 연결 · 여러 보호구 미착용도 1명'} warning icon={<ShieldCheck/>}/>
-                <Stat label="오늘 누적 위반 의심 이벤트" value={connection === 'ready' ? summary?.today ?? 0 : '—'} unit="건"
-                  detail="전체 영상 · 한국 시간 기준 · 인원수 아님" warning icon={<Bell/>}/>
-              </div>}
-              <div className={`dashboard-grid ${page !== 'monitor' ? 'events-only' : ''}`}>
-                {page === 'monitor' && <section className="panel monitor-panel">
-                  <div className="section-title"><div><h2>현장 영상</h2><span className="muted">{camera.id} · {analysis?.source_kind === 'camera' ? '실제 카메라' : `${camera.name} (${camera.source})`}</span></div>
-                  </div>
-                  <div className="player-shell" ref={feedRef}>
-                    {video ? <div className="local-preview"><video controls src={video.url} onError={() => setNotice('영상을 재생하지 못했습니다.')}/><p>로컬 파일 미리보기 · AI 분석 없음</p><button onClick={toggleFullscreen}>전체화면</button></div> :
-                      <MonitorPlayer key={camera.id} cameraId={camera.id} status={analysis} connection={connection} enabled={isTestCamera && analysis?.camera_id === camera.id} onFrame={setDisplayedFrame} jump={jump}
-                        expanded={expanded} onExpand={() => setExpanded((value) => !value)} onFullscreen={toggleFullscreen} isFullscreen={isFullscreen}/>}
-                  </div>
-                  <div className="feed-footer">
-                    <span className={analysis?.state === 'running' && connection === 'ready' ? 'signal-good' : 'signal-caution'}>{connection !== 'ready' ? connectionText : stateLabel[analysis?.state] ?? '대기'}</span>
-                    <div className="capture-controls">
-                      <button className="primary" onClick={startAnalysis} disabled={!isTestCamera || controlBusy || ['running','starting','stopping'].includes(analysis?.state)}>감지·녹화 시작</button>
-                      <button className="danger-button" onClick={stopAnalysis} disabled={!isTestCamera || controlBusy || !['running','starting','stopping','disconnected'].includes(analysis?.state)}>감지·녹화 중단</button>
-                      <button className="text-btn" onClick={() => fileRef.current?.click()}><Upload size={15}/>파일 미리보기</button>
-                      {video && <button className="text-btn" onClick={() => setVideo(null)}>관제 영상으로 돌아가기</button>}
-                    </div>
-                  </div>
-                  {analysis?.error && <p className="connection-note" role="alert">{analysis.error}</p>}
-                  <div className="small-note">재생 화면과 인원은 같은 프레임 기준입니다. 미착용 인원은 사람·보호구 박스 위치를 연결한 추정치이며, 모호한 연결은 집계에서 제외합니다.</div>
-                </section>}
-                <div className="event-column">
-                  {page === 'monitor' ? <section className="panel camera-panel" aria-labelledby="camera-panel-title">
-                    <div className="section-title"><div><h2 id="camera-panel-title"><Camera size={16}/> 카메라 전환</h2><span className="muted">확인할 영상을 선택하세요.</span></div></div>
-                    <div className="camera-list">
-                      {cameras.map((item) => <button key={item.id} type="button"
-                        className={`camera-choice ${camera.id === item.id ? 'active' : ''}`}
-                        aria-pressed={camera.id === item.id} disabled={controlBusy}
-                        onClick={() => changeCamera(item.id)}>
-                        <Camera size={22}/>
-                        <span className="camera-choice-info"><strong>{item.id} · {item.name}</strong><span>{item.source}</span></span>
-                        <span className="camera-choice-status">{camera.id === item.id ? '선택됨' : '전환'}</span>
-                      </button>)}
-                    </div>
-                  </section> : <EventPanel events={shown} summary={summary} connection={connection} filter={filter} setFilter={setFilter}
-                    equipment={equipment} setEquipment={setEquipment} day={day} setDay={setDay} review={review}
-                    exportCsv={exportCsv} onJump={jumpToEvent} canLoadMore={events.length >= eventLimit && eventLimit < 1000}
-                    loadMore={() => setEventLimit((value) => Math.min(value + 100, 1000))}/>}
+              {page === 'monitor' && <>
+                <div className="stats">
+                  <Stat label="현재 감지 인원 합계" value={totals.active ? totals.people : '—'} unit="명" detail={`실시간 수신 ${totals.active}/3대 · 카메라별 검출 합계`} icon={<Camera/>}/>
+                  <Stat label="현재 미착용 추정 인원 합계" value={totals.active ? totals.violations : '—'} unit="명" detail="각 카메라의 명시적 미착용 증거 기준" warning icon={<ShieldCheck/>}/>
+                  <Stat label="오늘 누적 이벤트" value={summary?.today ?? '—'} unit="건" detail="전체 카메라 · 한국 시간 기준" warning icon={<Bell/>}/>
                 </div>
-              </div>
+                <MultiCameraMonitor jump={jump} onTotals={setTotals}/>
+                <button className="text-btn" onClick={() => fileRef.current?.click()}><Upload size={15}/>파일 미리보기</button>
+                {video && <div className="local-preview"><video controls src={video.url}/><p>로컬 파일 미리보기 · AI 분석 없음</p><button onClick={() => setVideo(null)}>미리보기 닫기</button></div>}
+              </>}
+              <EventPanel events={shown} summary={summary} connection={connection} filter={filter} setFilter={setFilter}
+                equipment={equipment} setEquipment={setEquipment} day={day} setDay={setDay} review={review}
+                exportCsv={exportCsv} onJump={jumpToEvent} canLoadMore={events.length >= eventLimit && eventLimit < 1000}
+                loadMore={() => setEventLimit((value) => Math.min(value + 100, 1000))}/>
+
             </>
           )}
 
@@ -559,10 +453,12 @@ function Root() {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState('');
+  const [runtime,setRuntime] = useState(null);
   useEffect(() => {
     const expire = () => setUser(null);
     window.addEventListener('session-expired', expire);
     accountRequest('/api/auth/me').then(setUser).catch(e => setMessage(e.message)).finally(() => setLoading(false));
+    accountRequest('/api/runtime').then(setRuntime).catch(()=>{});
     return () => window.removeEventListener('session-expired', expire);
   }, []);
   async function logout() {
@@ -570,12 +466,12 @@ function Root() {
     catch(e) {setMessage(e.message); return false;}
   }
   if (loading) return <div className="login-page">로그인 상태 확인 중…</div>;
-  if (!user || user.must_change_password) return <LoginPage user={user} onLogin={result=>{setMessage('');setUser(result);}} onLogout={()=>setUser(null)}/>;
+  if (!user || user.must_change_password) return <LoginPage user={user} localDemo={runtime?.local_demo} onLogin={result=>{setMessage('');setUser(result);}} onLogout={()=>setUser(null)}/>;
   if (window.location.pathname === '/admin/accounts') {
     if (user.role !== 'system') return <div className="login-page"><p>시스템팀 권한이 필요합니다. <a href="/">대시보드로 이동</a></p></div>;
     return <AccountPage onLogout={logout}/>;
   }
-  return <>{user.role === 'system' && <div className="session-bar"><span>{user.employee_id}</span><a href="/admin/accounts">관리자 계정 관리</a></div>}<App onLogout={logout} user={user}/></>;
+  return <>{runtime?.local_demo && <div className="local-demo-banner" role="status">LOCAL DEMO · 운영 계정과 분리된 로컬 관제 화면 · YOLO {runtime.yolo_state === 'missing' ? '모델 없음' : runtime.yolo_state}</div>}{user.role === 'system' && <div className="session-bar"><span>{user.employee_id}</span><a href="/admin/accounts">관리자 계정 관리</a></div>}<App onLogout={logout} user={user}/></>;
 }
 createRoot(document.getElementById('root')).render(
   <React.StrictMode>

@@ -1,0 +1,37 @@
+# Pinned and validated against MediaMTX 1.21.3. All secrets arrive via the auth service.
+logLevel: warn
+authMethod: http
+authHTTPAddress: http://media-auth:8003/auth
+authHTTPExclude: []
+api: true
+apiAddress: :9997
+metrics: false
+pprof: false
+rtsp: true
+rtspAddress: :8554
+rtspTransports: [tcp]
+rtspAuthMethods: [basic]
+rtmp: true
+rtmpEncryption: strict
+rtmpsAddress: :1936
+rtmpServerKey: /certs/privkey.pem
+rtmpServerCert: /certs/fullchain.pem
+webrtc: true
+webrtcAddress: :8889
+webrtcAllowOrigins: []
+webrtcIPsFromInterfaces: false
+webrtcAdditionalHosts: [replace-with-public-stream-host.invalid]
+webrtcLocalUDPAddress: :8189
+webrtcLocalTCPAddress: :8189
+hls: false
+srt: false
+moq: false
+playback: false
+pathDefaults:
+  source: publisher
+  overridePublisher: false
+  record: false
+paths:
+  cam01: {}
+  cam02: {}
+  cam03: {}

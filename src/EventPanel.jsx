@@ -24,6 +24,8 @@ function EventFacts({event, detailed = false}) {
     {videoTime && <span>영상 위치 {videoTime}</span>}
     <strong className="event-people">해당 미착용 추정 {event.event_person_count == null ? '기록 없음' : `${event.event_person_count}명`}</strong>
     {event.person_track_id && <span>추적 인물 #{event.person_track_id} · {event.event_reason === 'sustained' ? '지속 미착용 재알림' : '최초 기록'}</span>}
+    {event.global_person_id && <span>{event.global_person_id} · {event.match_state === 'estimated' ? '동일인 추정' : event.match_state === 'manual' ? '관리자 수정' : '미확정'}</span>}
+    {!!event.notification_suppressed && <span>카메라 이동 후 동일 증거 · 반복 새 감지 알림 생략</span>}
     <span>당시 감지 인원 {event.person_count == null ? '기록 없음' : `${event.person_count}명`}</span>
     {detailed && <span>당시 전체 보호구 미착용 추정 {event.noncompliant_person_count == null ? '기록 없음' : `${event.noncompliant_person_count}명`}</span>}
     {event.unassigned_negative_count > 0 && <span className="signal-caution">당시 사람 연결 불가 {event.unassigned_negative_count}건 · 인원 제외</span>}
@@ -48,7 +50,7 @@ export default function EventPanel({events, connection, summary, filter, setFilt
   useEffect(() => {
     if (connection !== 'ready') return;
     const isNewFilter = previousFilter.current !== filterKey;
-    const added = events.filter((event) => !seen.current.has(event.id));
+    const added = events.filter((event) => !seen.current.has(event.id) && !event.notification_suppressed);
     if (initialized.current && !isNewFilter && added.length) setNewIds(new Set(added.map((event) => event.id)));
     if (isNewFilter) setNewIds(new Set());
     events.forEach((event) => seen.current.add(event.id));

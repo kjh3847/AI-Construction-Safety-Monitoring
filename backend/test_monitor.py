@@ -6,14 +6,16 @@ import unittest
 
 import cv2
 import numpy as np
-from ultralytics import YOLO
 import database
 from monitor import Monitor
 from person_safety import associate_people
 
 
 class RealMonitorTest(unittest.TestCase):
+    @unittest.skipUnless((Path(__file__).parent/'best.pt').is_file() and (Path(__file__).parent/'test.mp4').is_file(),
+                         'Real best.pt and test.mp4 are required; camera/model accuracy is not validated')
     def test_independent_detection_recording_and_evidence(self):
+        from ultralytics import YOLO
         base = Path(__file__).resolve().parent
         original = database.DB_PATH
         with tempfile.TemporaryDirectory() as directory:

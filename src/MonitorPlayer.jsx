@@ -2,10 +2,12 @@ import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Play, Pause, SkipBack, SkipForward, Radio, Maximize, PanelRightClose, PanelRightOpen } from 'lucide-react';
 
 import {API_BASE} from './api';
+import {unpackFrame, textLabels} from './frameProtocol';
+import WebRTCLive from './WebRTCLive';
 const BASE = API_BASE;
 const timeLabel = (timestamp) => timestamp == null ? '—' : new Date(timestamp * 1000).toLocaleString('ko-KR');
 const durationLabel = (seconds) => seconds >= 86400 ? `${(seconds / 86400).toFixed(1).replace(/\.0$/, '')}일` : seconds >= 60 ? `${Math.floor(seconds / 60)}분 ${Math.floor(seconds % 60)}초` : `${Math.floor(seconds)}초`;
-export const stateLabel = {idle:'감지 대기', starting:'연결 중', running:'감지 중', stopping:'감지 종료 중', stopped:'감지 중단', finished:'테스트 영상 종료', disconnected:'카메라 연결 끊김', error:'감지 오류'};
+export const stateLabel = {unconfigured:'연결 안 됨', idle:'감지 대기', starting:'연결 중', running:'감지 중', reconnecting:'재연결 중', stopping:'감지 종료 중', stopped:'감지 중단', finished:'테스트 영상 종료', disconnected:'카메라 연결 끊김', error:'감지 오류'};
 
 export default function MonitorPlayer({ cameraId, status, connection, enabled, onFrame, jump, expanded, onExpand, onFullscreen, isFullscreen }) {
   const [mode, setMode] = useState('live');
@@ -14,6 +16,8 @@ export default function MonitorPlayer({ cameraId, status, connection, enabled, o
   const [position, setPosition] = useState(null);
   const [seekVersion, setSeekVersion] = useState(0);
   const [error, setError] = useState('');
+  const [displayFps,setDisplayFps] = useState(0);
+  const [transferRate,setTransferRate] = useState(0);
   const canvas = useRef(null);
   const statusRef = useRef(status);
   const target = useRef(null);
@@ -23,13 +27,23 @@ export default function MonitorPlayer({ cameraId, status, connection, enabled, o
   callback.current = onFrame;
   const bounds = status?.buffer;
   const available = bounds?.start != null;
+  const webRTC = status?.live_transport === 'webrtc' && mode === 'live';
 
   useLayoutEffect(() => {
-    if (!frame || !canvas.current) return;
+    if (!frame?.decoded || !canvas.current) return;
     const image = frame.decoded;
     canvas.current.width = image.naturalWidth;
     canvas.current.height = image.naturalHeight;
-    canvas.current.getContext('2d').drawImage(image, 0, 0);
+    const context = canvas.current.getContext('2d');
+    context.drawImage(image, 0, 0);
+    context.font = `${Math.max(14, Math.round(image.naturalWidth/65))}px "Malgun Gothic", sans-serif`;
+    context.lineWidth = 3;
+    context.strokeStyle = '#07101e';
+    for (const label of textLabels(frame, image.naturalWidth, image.naturalHeight, text => context.measureText(text).width)) {
+      context.fillStyle = label.danger ? '#ff8585' : '#8aefc1';
+      context.strokeText(label.text,label.x,label.y,image.naturalWidth);
+      context.fillText(label.text,label.x,label.y,image.naturalWidth);
+    }
   }, [frame]);
 
   useEffect(() => {
@@ -52,8 +66,55 @@ export default function MonitorPlayer({ cameraId, status, connection, enabled, o
       callback.current(null);
       return;
     }
+    if(webRTC)return;
     let active = true;
     let timer;
+    if (mode === 'live' && !paused) {
+      let socket;
+      let retry;
+      let pending = null;
+      let decoding = false;
+      let clock = performance.now(), rendered = 0, receivedBytes = 0;
+      async function renderLatest() {
+        if (decoding) return;
+        decoding = true;
+        while (active && pending) {
+          const packet = pending;
+          pending = null;
+          let url;
+          try {
+            const {meta, image} = unpackFrame(packet, cameraId);
+            url = URL.createObjectURL(image);
+            const decoded = new Image();
+            decoded.src = url;
+            await decoded.decode();
+            if (!active) break;
+            displayed.current = meta;
+            rendered += 1;
+            const elapsed = (performance.now()-clock)/1000;
+            if (elapsed >= 1) {
+              setDisplayFps(rendered/elapsed); setTransferRate(receivedBytes/elapsed);
+              clock = performance.now(); rendered=0; receivedBytes=0;
+            }
+            setFrame({...meta,decoded}); setPosition(meta.timestamp); setError('');
+            callback.current({...meta,mode,paused});
+          } catch (exc) { if (active) setError(exc.message); }
+          finally { if (url) URL.revokeObjectURL(url); }
+        }
+        decoding = false;
+      }
+      function connect() {
+        const url = new URL(`${BASE}/api/live/${encodeURIComponent(cameraId)}`, window.location.href);
+        url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
+        socket = new WebSocket(url);
+        socket.binaryType = 'arraybuffer';
+        socket.onmessage = event => { receivedBytes += event.data.byteLength; pending = event.data; renderLatest(); };
+        socket.onclose = () => { if (active) { setError('실시간 연결 재시도 중'); retry = setTimeout(connect,2000); } };
+        socket.onerror = () => socket.close();
+      }
+      connect();
+      return () => { active=false; pending=null; clearTimeout(retry); socket?.close(); };
+    }
     let previousClock = performance.now();
     const controller = new AbortController();
     async function tick() {
@@ -84,6 +145,7 @@ export default function MonitorPlayer({ cameraId, status, connection, enabled, o
         });
         if (!response.ok) throw new Error(response.status === 410 ? '재생 가능한 영상 없음 · 보관 범위를 다시 선택하세요.' : '영상 조회 실패');
         const data = await response.json();
+        if (data.camera_id && data.camera_id !== cameraId) throw new Error('카메라 영상 식별자 불일치');
         const decoded = new Image();
         decoded.src = data.image;
         await decoded.decode();
@@ -102,7 +164,7 @@ export default function MonitorPlayer({ cameraId, status, connection, enabled, o
     }
     tick();
     return () => { active = false; clearTimeout(timer); controller.abort(); };
-  }, [enabled, mode, paused, seekVersion, cameraId]);
+  }, [enabled, mode, paused, seekVersion, cameraId,webRTC]);
 
   function seek(value) {
     if (!available) return;
@@ -113,6 +175,7 @@ export default function MonitorPlayer({ cameraId, status, connection, enabled, o
     setSeekVersion((n) => n + 1);
   }
   function togglePause() {
+    if(webRTC){setPaused(!paused);return;}
     if (paused) {
       setMode('past');
       target.current = displayed.current?.timestamp;
@@ -128,16 +191,18 @@ export default function MonitorPlayer({ cameraId, status, connection, enabled, o
   }
   const fresh = connection === 'ready' && status?.state === 'running' && frame?.recording_id === status?.recording_id
     && Date.now()/1000 - frame?.timestamp < 10;
-  const label = paused ? '일시정지 · 과거 화면' : mode === 'past' ? '과거 재생' : fresh ? (status?.source_kind === 'test' ? '테스트 영상 · 현재' : 'LIVE · 실시간') : stateLabel[status?.state] ?? '연결 중';
+  const label = paused ? '일시정지 · 과거 화면' : mode === 'past' ? '과거 재생' : webRTC ? (status?.relay?.online?'LIVE · WebRTC':'송출 대기') : fresh ? (status?.source_kind === 'test' ? '테스트 영상 · 현재' : 'LIVE · 실시간') : stateLabel[status?.state] ?? '연결 중';
   return <>
     <div className="dvr-picture">
-      <canvas ref={canvas} role="img" aria-label="재생 시점의 YOLO 감지 영상" hidden={!frame}/>
-      {!frame && <div className="empty-feed"><Radio size={36}/><h3>{enabled ? '영상 버퍼 준비' : '연결된 카메라가 없습니다'}</h3></div>}
+      <canvas ref={canvas} role="img" aria-label="재생 시점의 YOLO 감지 영상" hidden={!frame || webRTC}/>
+      {webRTC && <WebRTCLive cameraId={cameraId} status={status} paused={paused} onFrame={meta=>{setFrame(meta);displayed.current=meta;callback.current(meta);}}/>}
+      {!frame && !webRTC && <div className="empty-feed"><Radio size={36}/><h3>{enabled ? '영상 버퍼 준비' : '카메라 연결 안 됨'}</h3>{!enabled && <p>영상 소스를 설정하면 이 화면에 표시됩니다.</p>}</div>}
       <div className="video-labels"><span>{frame?.camera_name ?? status?.camera_name ?? 'CAM-01'}</span><span className={fresh && mode === 'live' ? 'signal-good' : 'signal-caution'}>{label}</span><span>{mode === 'past' || paused ? '재생 시점' : '현재'} 감지 {connection === 'ready' && frame && (fresh || mode === 'past' || paused) ? `${frame.person_count}명` : '—'}</span><span>{timeLabel(frame?.timestamp)}</span></div>
       {(connection !== 'ready' || error) && <div className="video-message" role="status">{connection === 'loading' ? '서버 연결 중' : connection === 'error' ? '서버 연결 실패 · 마지막 화면' : error}</div>}
       {frame?.source_kind === 'test' && <span className="source-label">테스트 영상 · {frame.source_name} · 원본 {frame.video_seconds.toFixed(1)}초</span>}
       {connection === 'ready' && frame && (fresh || mode === 'past' || paused) && <span className="person-count-label">미착용 추정 {frame.noncompliant_person_count == null ? '—' : `${frame.noncompliant_person_count}명`}{frame.unassigned_negative_count > 0 ? ` · 연결 불가 ${frame.unassigned_negative_count}건` : ''}</span>}
       {connection === 'ready' && frame && (fresh || mode === 'past' || paused) && <span className={`risk-label ${frame.negative_detection_count > 0 ? 'signal-danger' : 'signal-good'}`}>{frame.negative_detection_count > 0 ? '⚠ 보호구 미착용 의심 감지' : '✓ 미착용 클래스 감지 없음'}</span>}
+      {fresh && mode === 'live' && !paused && <span className="display-metrics">표시 {displayFps.toFixed(1)} FPS · 수신 {(transferRate/1024).toFixed(1)} KiB/s</span>}
     </div>
     <div className="playback-toolbar">
       <button onClick={togglePause} disabled={!frame || !enabled} title="화면만 일시정지합니다. 서버 감지와 녹화는 계속됩니다.">{paused ? <Play size={16}/> : <Pause size={16}/>} {paused ? '재생' : '화면 일시정지'}</button>

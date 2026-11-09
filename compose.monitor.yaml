@@ -1,0 +1,62 @@
+services:
+  postgres:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: safety
+      POSTGRES_USER: safety
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+    volumes:
+      - account_data:/var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, pg_isready -U safety -d safety]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    logging: &logging
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '5'
+  monitor:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.monitor
+    restart: unless-stopped
+    init: true
+    stop_grace_period: 45s
+    env_file: .env
+    # Media role credentials are private and shared only with the authorization service.
+    environment:
+      MONITOR_STORAGE_DIR: /data/recordings
+      SAFETY_DB_PATH: /data/safety.db
+      MODEL_PATH: /models/best.pt
+      REID_MODEL_PATH: ${REID_MODEL_PATH:-}
+      PUBLIC_APP_URL: ${PUBLIC_APP_URL:?Set PUBLIC_APP_URL}
+      COOKIE_SECURE: ${COOKIE_SECURE:-true}
+    volumes:
+      - monitor_data:/data
+      - ./models:/models:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8002/health',timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    logging: *logging
+  web:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.web
+    restart: unless-stopped
+    ports:
+      - '${WEB_BIND_ADDRESS:-127.0.0.1}:8080:80'
+    depends_on:
+      monitor:
+        condition: service_healthy
+    logging: *logging
+volumes:
+  account_data:
+  monitor_data:

@@ -1,146 +1,47 @@
-"""Independent inference worker and bounded, seekable annotated-frame recording."""
+"""Independent analysis, in-memory live frames, and asynchronous seekable recording."""
 import base64
-from collections import deque
 from datetime import datetime, timezone
 import hashlib
-import json
 import os
+os.environ.setdefault('OPENCV_FFMPEG_LOGLEVEL','-8')
 from pathlib import Path
 import re
 import shutil
 from threading import Event, RLock, Thread
 import time
 import uuid
+from queue import Queue, Full
 
 import cv2
 
 from database import attach_recording, get_connection, fill_event_counts
-from database import DEFAULT_RETENTION_SECONDS
 from event_recorder import EventRecorder
 from person_safety import associate_people, event_counts, ASSOCIATION_METHOD
+from camera_config import classify_source
+from inference import FairInference, LocalBoTSORT
 
 
-class FrameStore:
-    def __init__(self, root, retention=DEFAULT_RETENTION_SECONDS, max_bytes=None):
-        self.root = Path(root).resolve()
-        self.root.mkdir(parents=True, exist_ok=True)
-        self.retention = retention
-        self.max_bytes = max_bytes
-        self.lock = RLock()
-        self.frames = deque()
-        self.bytes = 0
-        self.sizes = {}
-        self.pending_deletes = {}
-        self.capacity_limited = False
-        for path in self.root.glob('*.json'):
-            if not re.fullmatch(r'[a-f0-9]{32}_\d+\.json', path.name):
-                continue
-            try:
-                meta = json.loads(path.read_text('utf-8'))
-                jpeg = path.with_suffix('.jpg')
-                if jpeg.exists():
-                    self.frames.append(meta)
-                    size = jpeg.stat().st_size
-                    self.bytes += size
-                    self.sizes[jpeg] = size
-            except (OSError, ValueError, KeyError):
-                continue
-        self.frames = deque(sorted(self.frames, key=lambda item: item['timestamp']))
-        self.prune()
-
-    def _path(self, frame):
-        return self.root / f"{frame['recording_id']}_{frame['frame_id']}.jpg"
-
-    def prune(self, now=None, reserve=0):
-        with self.lock:
-            for path, size in list(self.pending_deletes.items()):
-                try:
-                    path.unlink(missing_ok=True)
-                except OSError:
-                    continue
-                self.bytes -= size
-                del self.pending_deletes[path]
-            cutoff = (time.time() if now is None else now) - self.retention
-            while self.frames and (self.frames[0]['timestamp'] < cutoff or
-                                   (self.max_bytes is not None and self.bytes + reserve > self.max_bytes)):
-                if self.max_bytes is not None and self.bytes + reserve > self.max_bytes:
-                    self.capacity_limited = True
-                frame = self.frames.popleft()
-                path = self._path(frame)
-                for target, size in ((path, self.sizes.pop(path, 0)), (path.with_suffix('.json'), 0)):
-                    try:
-                        target.unlink(missing_ok=True)
-                    except OSError:
-                        # OneDrive/Windows can lock a file temporarily. It is
-                        # no longer playable, but still counts toward capacity.
-                        self.pending_deletes[target] = size
-                    else:
-                        self.bytes -= size
-
-    def add(self, meta, jpeg):
-        with self.lock:
-            self.prune(reserve=len(jpeg))
-            if (self.max_bytes is not None and self.bytes + len(jpeg) > self.max_bytes) or len(self.pending_deletes) > 10000:
-                self.capacity_limited = True
-                return False
-            if shutil.disk_usage(self.root).free < len(jpeg) + 1024 * 1024 * 1024:
-                raise OSError('Insufficient free disk space for recording')
-            path = self._path(meta)
-            path.write_bytes(jpeg)
-            path.with_suffix('.json').write_text(json.dumps(meta), encoding='utf-8')
-            self.frames.append(meta)
-            self.bytes += len(jpeg)
-            self.sizes[path] = len(jpeg)
-            self.prune()
-            return True
-
-    def bounds(self):
-        with self.lock:
-            self.prune()
-            return {'start': self.frames[0]['timestamp'] if self.frames else None,
-                    'end': self.frames[-1]['timestamp'] if self.frames else None,
-                    'retention_seconds': self.retention, 'frames': len(self.frames),
-                    'bytes': self.bytes, 'max_bytes': self.max_bytes,
-                    'capacity_limited': self.capacity_limited}
-
-    def get(self, at=None, recording_id=None, frame_id=None):
-        with self.lock:
-            self.prune()
-            if not self.frames:
-                return None
-            if recording_id is not None:
-                chosen = next((f for f in self.frames if f['recording_id'] == recording_id
-                               and f['frame_id'] == frame_id), None)
-            elif at is not None:
-                if at < self.frames[0]['timestamp'] or at > self.frames[-1]['timestamp']:
-                    return None
-                chosen = next((f for f in reversed(self.frames) if f['timestamp'] <= at), None)
-            else:
-                chosen = self.frames[-1]
-            if chosen is None:
-                return None
-            try:
-                return dict(chosen), self._path(chosen).read_bytes()
-            except OSError:
-                return None
-
-    def contains(self, recording_id, frame_id):
-        with self.lock:
-            return any(f['recording_id'] == recording_id and f['frame_id'] == frame_id for f in self.frames)
+from frame_store import FrameStore
 
 
 class Monitor:
-    def __init__(self, model, model_path, video_path, root, camera_name=None, use_camera_env=True, inference_lock=None):
+    def __init__(self, model, model_path, video_path, root, camera_name=None, use_camera_env=True,
+                 engine=None, global_tracker=None, camera_id=None, adapter='direct'):
         self.model = model
+        self.adapter = adapter
         self.model_path = Path(model_path)
-        self.video_path = Path(video_path)
         source = os.getenv('CAMERA_SOURCE', '').strip() if use_camera_env else ''
-        self.source = int(source) if source.isdigit() else source or str(video_path)
-        self.source_kind = 'camera' if source else 'test'
+        self.source, self.source_type = classify_source(source or video_path)
+        self.source_kind = 'test' if self.source_type == 'file' else 'camera'
+        self.video_path = Path(self.source) if self.source_type == 'file' else None
         self.camera_name = camera_name or os.getenv('CAMERA_NAME', 'CAM-01')
-        self.inference_lock = inference_lock or RLock()
-        self.source_name = '실제 카메라' if source else self.video_path.name
-        self.store = FrameStore(Path(root) / 'frames')
+        self.camera_id = camera_id or self.camera_name
+        self.engine = engine or FairInference(model)
+        self.global_tracker = global_tracker
+        self.source_name = self.video_path.name if self.video_path else '미설정' if self.source is None else '실제 카메라'
+        if self.adapter=='mediamtx':self.source_name='MediaMTX 스트림'
+        capacity = int(os.getenv('RECORDING_MAX_BYTES_PER_CAMERA', '0')) or None
+        self.store = FrameStore(Path(root) / 'frames', max_bytes=capacity)
         self.snapshots = Path(root) / 'snapshots'
         self.snapshots.mkdir(parents=True, exist_ok=True)
         self.lock = RLock()
@@ -152,6 +53,12 @@ class Monitor:
         self.error = None
         self.updated_at = None
         self.recording_id = None
+        self.latest = None
+        self.capture = None
+        self.metrics = {}
+        self.storage_error = None
+        self.writer_queue = Queue(maxsize=32)
+        self.writer = None
 
     def initialize(self, retention):
         self.store.retention = retention
@@ -169,22 +76,23 @@ class Monitor:
 
     def _cleanup_loop(self):
         while not self.shutdown_event.wait(5):
-            self.store.prune()
             try:
+                self.store.prune()
                 self._cleanup_snapshots()
             except OSError:
                 # Retry after transient file locks without killing the janitor.
                 continue
 
     def _cleanup_snapshots(self):
-            files = sorted((p for p in self.snapshots.glob('*.jpg')
-                            if re.fullmatch(r'[a-f0-9]{64}\.jpg', p.name)), key=lambda p: p.stat().st_mtime)
-            for path in files:
-                if path.stat().st_mtime < time.time() - self.store.retention:
-                    path.unlink(missing_ok=True)
+        for path in self.snapshots.glob('*.jpg'):
+            if re.fullmatch(r'[a-f0-9]{64}\.jpg',path.name) and path.stat().st_mtime < time.time()-self.store.retention:
+                path.unlink(missing_ok=True)
 
     def start(self):
         with self.lock:
+            if self.source is None:
+                self.state,self.error = 'idle',None
+                return
             if self.thread and self.thread.is_alive():
                 return
             self.stop_event.clear()
@@ -203,48 +111,87 @@ class Monitor:
         self.stop()
         self.shutdown_event.set()
         if self.thread:
-            self.thread.join(timeout=12)
+            self.thread.join(timeout=20)
         if self.janitor:
             self.janitor.join(timeout=2)
 
     def status(self):
         with self.lock:
             stale = self.state == 'running' and self.updated_at and time.time() - self.updated_at > 10
-            return {'state': 'disconnected' if stale else self.state, 'error': self.error,
+            current = self.latest[0] if self.latest and self.state == 'running' and not stale else None
+            return {'state': 'unconfigured' if self.source is None else 'disconnected' if stale else self.state, 'error': self.error,
                     'updated_at': self.updated_at, 'camera_name': self.camera_name,
                     'source_name': self.source_name, 'source_kind': self.source_kind,
+                    'source_type': self.source_type, 'configured': self.source is not None,
+                    'input_adapter':self.adapter,'live_transport':'webrtc' if self.adapter=='mediamtx' else 'binary',
+                    'metrics': {**self.metrics, **(self.capture.stats() if self.capture else {})},
+                    'storage_error': self.storage_error,
+                    'current_counts':({key:current.get(key) for key in ('person_count','noncompliant_person_count')}
+                                      if current else None),
                     'recording_id': self.recording_id, 'buffer': self.store.bounds(),
-                    'model_name': self.model_path.name, 'classes': self.model.names,
+                    'model_name': self.model_path.name, 'classes': getattr(self.model,'names',{}),
                     'person_association': True, 'person_association_method': ASSOCIATION_METHOD}
+
+    def latest_frame(self):
+        with self.lock:
+            return self.latest
+
+    def _write_loop(self):
+        while True:
+            item = self.writer_queue.get()
+            try:
+                if item is None:
+                    return
+                meta, jpeg, keys = item
+                started = time.perf_counter()
+                retained = self.store.add(meta, jpeg)
+                for key in keys:
+                    name = hashlib.sha256(key.encode()).hexdigest() + '.jpg'
+                    (self.snapshots / name).write_bytes(jpeg)
+                    attach_recording(key, meta['recording_id'] if retained else None,
+                                     meta['frame_id'] if retained else None, name)
+                self.metrics['recording_write_ms'] = round((time.perf_counter()-started)*1000,2)
+                self.storage_error = None if retained else '녹화 용량 한도에 도달했습니다.'
+            except Exception:
+                self.storage_error = '녹화 저장 실패 · 디스크 공간과 권한을 확인하세요.'
+            finally:
+                self.writer_queue.task_done()
 
     def _run(self):
         cap = None
         live_reader = None
         try:
-            if isinstance(self.source, str) and self.source.startswith(('rtsp://', 'http://', 'https://')):
-                cap = cv2.VideoCapture(self.source, cv2.CAP_FFMPEG,
-                    [cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 5000, cv2.CAP_PROP_READ_TIMEOUT_MSEC, 5000])
-            else:
-                cap = cv2.VideoCapture(self.source)
-            if not cap.isOpened():
-                with self.lock:
-                    self.state = 'disconnected' if self.source_kind == 'camera' else 'error'
-                    self.error = '영상 소스를 열 수 없습니다. 카메라 연결 또는 시험 파일을 확인하세요.'
+            if self.source is None:
+                self.state, self.error = 'idle', '카메라 입력이 설정되지 않았습니다.'
                 return
-            fps = cap.get(cv2.CAP_PROP_FPS)
+            if self.source_kind == 'test':
+                cap = cv2.VideoCapture(self.source)
+                if not cap.isOpened():
+                    self.state, self.error = 'error', '시험 영상 파일을 열 수 없습니다.'
+                    return
+            else:
+                from live_capture import ReconnectingCapture
+                if self.adapter=='mediamtx':
+                    from rtsp_clock import RTSPClockCapture
+                    self.capture = live_reader = ReconnectingCapture(self.source,RTSPClockCapture)
+                else:self.capture = live_reader = ReconnectingCapture(self.source)
+            fps = cap.get(cv2.CAP_PROP_FPS) if cap else 25
             fps = fps if 0 < fps <= 240 else 25
             digest = hashlib.sha256()
-            for path in (self.video_path, self.model_path) if self.source_kind == 'test' else (self.model_path,):
+            for path in (self.video_path, self.model_path) if self.source_kind == 'test' else ():
                 with path.open('rb') as stream:
                     for chunk in iter(lambda: stream.read(1024 * 1024), b''):
                         digest.update(chunk)
             source_id = digest.hexdigest() if self.source_kind == 'test' else self.recording_id
-            recorder = EventRecorder(source_id, self.model_path.name, self.source_name, camera_name=self.camera_name)
-            frame_id, last_saved = 0, 0
+            recorder = EventRecorder(source_id, self.model_path.name, self.source_name,
+                                     camera_name=self.camera_name,camera_id=self.camera_id)
+            frame_id, last_saved, last_generation = 0, 0, None
             origin = time.monotonic()
-            if self.source_kind == 'camera':
-                from live_capture import LatestFrameReader
-                live_reader = LatestFrameReader(cap)
+            local_tracker = LocalBoTSORT()
+            self.writer = Thread(target=self._write_loop, daemon=True, name=f'{self.camera_id}-recording')
+            self.writer.start()
+            analysis_interval = 1/max(.1,float(os.getenv('ANALYSIS_FPS', '5')))
+            recording_interval = 1/max(.1,float(os.getenv('RECORDING_FPS', '2')))
             while not self.stop_event.is_set():
                 started = time.monotonic()
                 if live_reader is not None:
@@ -254,56 +201,91 @@ class Monitor:
                     captured = time.time()
                 if not success:
                     with self.lock:
-                        self.state = 'finished' if self.source_kind == 'test' else 'disconnected'
+                        self.state = 'finished' if self.source_kind == 'test' else live_reader.connection_state
                         self.error = None if self.source_kind == 'test' else '카메라 영상 수신이 끊겼습니다.'
-                    break
-                
-                # 👇 [핵심 변경 사항 1] predict 대신 track을 사용하여 BoT-SORT 추적기를 활성화합니다.
-                with self.inference_lock:
-                    result = self.model.track(source=frame, imgsz=640, conf=0.4, device='cpu', verbose=False, persist=True, tracker="botsort.yaml")[0]
-                
-                # 👇 [핵심 변경 사항 2] 결과에서 사람의 ID 번호(track_id)를 추출하여 기록할 데이터에 추가합니다.
-                detections = [{
-                    'class_name': result.names[int(box.cls.item())],
-                    'confidence': float(box.conf.item()),
-                    'bbox': box.xyxy[0].tolist(),
-                    'track_id': int(box.id.item()) if box.id is not None else None  # 추적 ID 저장
-                } for box in result.boxes]
-                
+                    if live_reader is None or not live_reader.thread.is_alive():
+                        break
+                    continue
+                if live_reader is not None and last_generation != live_reader.generation:
+                    local_tracker = LocalBoTSORT()
+                    # A reconnect starts a fresh local identity/violation clock.
+                    recorder = EventRecorder(f'{source_id}:{live_reader.generation}', self.model_path.name,
+                                             self.source_name, camera_name=self.camera_name,camera_id=self.camera_id)
+                    last_generation = live_reader.generation
+                max_width = int(os.getenv('CAPTURE_MAX_WIDTH', '1280'))
+                if frame.shape[1] > max_width:
+                    frame = cv2.resize(frame, (max_width,round(frame.shape[0]*max_width/frame.shape[1])))
+                result, wait_ms, inference_ms = self.engine.predict(frame)
+                detections = local_tracker.detections(result, frame)
                 video_seconds = frame_id / fps if self.source_kind == 'test' else started - origin
+                tracks = recorder.tracker.update(detections, frame_id, video_seconds)
+                association = associate_people(detections)
+                people = [detections[p['detection_index']] for p in association['person_safety']]
+                violations = {str(detections[p['detection_index']]['track_id']):p['violations']
+                              for p in association['person_safety']}
+                identities = {}
+                if self.global_tracker:
+                    vectors = self.global_tracker.encoder.encode(frame, people)
+                    # RTP time aligns this stream's frames but is not a trusted
+                    # capture clock shared between phones. Cross-camera matching
+                    # is disabled unless clock bounds were independently verified.
+                    if self.adapter=='mediamtx' and os.getenv('PUSH_CAPTURE_CLOCK_VERIFIED','false').lower()!='true':
+                        vectors=[None]*len(people)
+                    identities = self.global_tracker.observe(self.camera_id,
+                        f'{source_id if self.source_kind == "test" else self.recording_id}:{last_generation}',
+                        people, captured, vectors, violations)
+                for person in association['person_safety']:
+                    detection = detections[person['detection_index']]
+                    person.update(bbox=detection['bbox'], local_track_id=detection['track_id'],
+                                  **identities.get(str(detection['track_id']), {}))
                 recorder.record(detections, frame_id, video_seconds,
-                    datetime.fromtimestamp(captured, timezone.utc).isoformat(timespec='milliseconds').replace('+00:00', 'Z'))
-                # DVR stores up to 5 fps plus every new event frame. Inference
-                # continues on all decoded frames, independently of viewers.
-                if captured - last_saved >= .2 or recorder.episode_keys:
-                    ok, buffer = cv2.imencode('.jpg', result.plot(), [cv2.IMWRITE_JPEG_QUALITY, 80])
-                    if not ok:
-                        raise RuntimeError('녹화 프레임 인코딩 실패')
-                    jpeg = buffer.tobytes()
-                    meta = {'recording_id': self.recording_id, 'frame_id': frame_id,
-                        'timestamp': captured, 'captured_at': datetime.fromtimestamp(captured, timezone.utc).isoformat(),
-                        'video_seconds': video_seconds, 'camera_name': self.camera_name,
-                        'source_kind': self.source_kind, 'source_name': self.source_name,
-                        'detections': detections,
-                        'person_count': sum(d['class_name'] == 'Person' for d in detections),
-                        **associate_people(detections),
-                        'negative_detection_count': sum(d['class_name'] in ('NO-Hardhat', 'NO-Safety Vest') for d in detections)}
-                    self.store.add(meta, jpeg)
-                    for key in recorder.episode_keys:
-                        name = hashlib.sha256(key.encode()).hexdigest() + '.jpg'
-                        (self.snapshots / name).write_bytes(jpeg)
-                        attach_recording(key, self.recording_id, frame_id, name)
-                    last_saved = captured
+                    datetime.fromtimestamp(captured, timezone.utc).isoformat(timespec='milliseconds').replace('+00:00', 'Z'),
+                    tracks=tracks, identities=identities)
+                # Encode the original pixels once. Labels are synchronized metadata.
+                encode_started = time.perf_counter()
+                ok, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
+                if not ok:
+                    raise RuntimeError('녹화 프레임 인코딩 실패')
+                jpeg = buffer.tobytes()
+                meta = {'recording_id': self.recording_id, 'frame_id': frame_id,
+                    'timestamp': captured, 'captured_at': datetime.fromtimestamp(captured, timezone.utc).isoformat(),
+                    'video_seconds': video_seconds, 'camera_id':self.camera_id, 'camera_name': self.camera_name,
+                    'source_kind': self.source_kind, 'source_name': self.source_name,
+                    'detections': detections, 'annotation_mode':'text-metadata',
+                    'width':frame.shape[1], 'height':frame.shape[0],
+                    'media_clock':dict(live_reader.consumed_clock) if live_reader else {},
+                    'source_generation':f'{self.recording_id}:{last_generation}',
+                    'person_count': sum(d['class_name'] == 'Person' for d in detections),
+                    **association,
+                    'negative_detection_count': sum(d['class_name'] in ('NO-Hardhat', 'NO-Safety Vest') for d in detections)}
                 with self.lock:
-                    self.state, self.updated_at = 'running', captured
+                    self.latest = meta, jpeg
+                if captured - last_saved >= recording_interval or recorder.episode_keys:
+                    try:
+                        self.writer_queue.put_nowait((meta, jpeg, list(recorder.episode_keys)))
+                    except Full:
+                        self.storage_error = '녹화 처리 지연 · 저장 프레임 일부 누락'
+                        self.metrics['recording_dropped'] = self.metrics.get('recording_dropped',0)+1
+                    last_saved = captured
+                elapsed = time.monotonic()-started
+                self.metrics.update(inference_wait_ms=round(wait_ms,2), inference_ms=round(inference_ms,2),
+                    jpeg_ms=round((time.perf_counter()-encode_started)*1000,2), jpeg_bytes=len(jpeg),
+                    processing_ms=round(elapsed*1000,2), frame_age_ms=round((time.time()-captured)*1000,2),
+                    analysis_fps=round((frame_id+1)/max(.001,time.monotonic()-origin),2))
+                with self.lock:
+                    self.state, self.updated_at, self.error = 'running', captured, None
                 frame_id += 1
                 if self.source_kind == 'test':
                     self.stop_event.wait(max(0, 1 / fps - (time.monotonic() - started)))
+                else:
+                    self.stop_event.wait(max(0,analysis_interval-elapsed))
         except Exception as exc:
             with self.lock:
                 self.state = 'error'
                 # Avoid returning camera URLs / credentials in exception text.
-                self.error = ('영상 저장에 실패했습니다. 디스크 여유 공간과 저장 폴더 권한을 확인하세요.'
+                self.error = ('모델 또는 시험 영상 파일을 찾을 수 없습니다. 서버 파일 설정을 확인하세요.'
+                              if isinstance(exc, FileNotFoundError) else
+                              '영상 저장에 실패했습니다. 디스크 여유 공간과 저장 폴더 권한을 확인하세요.'
                               if isinstance(exc, OSError) else
                               '영상 감지 또는 저장에 실패했습니다. 서버 로그와 소스 연결을 확인하세요.')
             import logging
@@ -313,6 +295,9 @@ class Monitor:
                 live_reader.close()
             elif cap is not None:
                 cap.release()
+            if self.writer and self.writer.is_alive():
+                self.writer_queue.put(None)
+                self.writer.join(timeout=10)
             with self.lock:
                 if self.stop_event.is_set():
                     self.state = 'stopped'

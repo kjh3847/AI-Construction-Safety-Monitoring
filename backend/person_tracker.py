@@ -34,6 +34,12 @@ class PersonTracker:
             if _box({'bbox': predicted}) is None:
                 predicted = track['box']
             for index, box in people.items():
+                upstream = detections[index].get('upstream_track_id')
+                if upstream is not None and track.get('upstream_track_id') is not None:
+                    if upstream != track['upstream_track_id']:
+                        continue
+                    candidates.append((2, key, index))
+                    continue
                 score = max(iou(box, predicted), iou(box, track['box']))
                 if seconds-track['seen'] <= .5 and framing_change(box, track['box']):
                     score = max(score, .25)
@@ -57,6 +63,7 @@ class PersonTracker:
                 if elapsed > 0:
                     track['velocity'] = [(v-old)/elapsed for v, old in zip(box, track['box'])]
             track.update(box=list(box), seen=seconds, id=key)
+            track['upstream_track_id'] = detections[index].get('upstream_track_id')
             detections[index]['track_id'] = key
             result[index] = track
         return result

@@ -50,7 +50,8 @@ class RecordingTest(unittest.TestCase):
         self.assertFalse(store.contains('b'*32,0))
         store.prune(now=now+31)
         self.assertEqual(store.bounds()['frames'],0)
-        self.assertEqual(list((self.root/'frames').iterdir()),[])
+        self.assertEqual(list((self.root/'frames').glob('*.jpg')),[])
+        self.assertEqual(list((self.root/'frames').glob('*.json')),[])
 
     def test_locked_expired_file_retries_without_exceeding_capacity(self):
         store=FrameStore(self.root/'frames',retention=30,max_bytes=10)
@@ -67,6 +68,7 @@ class RecordingTest(unittest.TestCase):
             self.assertIsNone(store.get())
             self.assertEqual(store.bytes,8)
             self.assertFalse(store.add({**meta,'frame_id':2},b'1234'))
+            self.assertEqual(FrameStore(self.root/'frames',retention=30,max_bytes=10).bytes,8)
         store.prune()
         self.assertEqual(store.bytes,0)
         self.assertEqual(store.pending_deletes,{})

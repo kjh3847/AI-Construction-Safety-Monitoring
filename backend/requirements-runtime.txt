@@ -1,0 +1,9 @@
+-r requirements-accounts.txt
+ultralytics==8.4.152
+opencv-python==5.0.0.93
+onnxruntime==1.31.1
+psutil==7.2.2
+websockets==17.4
+lap==0.5.13
+python-dotenv>=1,<2
+av==19.0.2

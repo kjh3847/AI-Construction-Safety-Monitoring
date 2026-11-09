@@ -1,0 +1,22 @@
+{
+  "upstream_osnet.py": {
+    "url": "https://raw.githubusercontent.com/KaiyangZhou/deep-person-reid/f8cd150fdf77e8d9e1ed143b7f308c2c609ded50/torchreid/models/osnet.py",
+    "sha256": "c7c1c29187d6330f859c91da229271531920464c7011aec13842a086b2263cae",
+    "bytes": 17037
+  },
+  "LICENSE.torchreid": {
+    "url": "https://raw.githubusercontent.com/KaiyangZhou/deep-person-reid/f8cd150fdf77e8d9e1ed143b7f308c2c609ded50/LICENSE",
+    "sha256": "3ac8ce2a83d170cb1c7c84152e0c1faca1f187794303514383960d2441716247",
+    "bytes": 1069
+  },
+  "osnet_x0_25_msmt17.pth": {
+    "url": "https://huggingface.co/kaiyangzhou/osnet/resolve/a5c5cc0/osnet_x0_25_msmt17_combineall_256x128_amsgrad_ep150_stp60_lr0.0015_b64_fb10_softmax_labelsmooth_flip_jitter.pth",
+    "sha256": "cf55163d78fc44c62c82f85ab62d39f10438679b5abe8c698ae08cfa84aa6e18",
+    "bytes": 9336983
+  },
+  "osnet_x1_0_msmt17.pth": {
+    "url": "https://huggingface.co/kaiyangzhou/osnet/resolve/a5c5cc0/osnet_x1_0_msmt17_combineall_256x128_amsgrad_ep150_stp60_lr0.0015_b64_fb10_softmax_labelsmooth_flip_jitter.pth",
+    "sha256": "48df972f72887b95cf3b43b3a07c3a7d2398381aea0f9cae64a7ef11d512b727",
+    "bytes": 17273805
+  }
+}

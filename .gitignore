@@ -256,6 +256,9 @@ __marimo__/
 backend/test_db.py
 .venv-accounts/
 .runtime-venv/
+models/
+.local-run/
+.secrets/
 .test-env/
 *.exe
 *.zip

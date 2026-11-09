@@ -64,3 +64,36 @@
 .logout-confirm{background:#cb3c48;color:white;border:1px solid #df5260}
 .logout-confirm:hover{background:#e04754}.logout-cancel:hover{background:#344962}
 .logout-dialog-actions button:disabled{opacity:.6;cursor:wait}
+
+.cctv .multi-camera-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin:16px 0}
+.cctv .camera-tile{min-width:0;align-self:start}
+.cctv .camera-tile .section-title{display:flex;flex-wrap:wrap;gap:8px;padding:12px}
+.cctv .camera-tile .section-title>span{font-size:11px}
+.cctv .camera-tile .feed-footer{display:flex;gap:8px;padding:10px}
+.cctv .camera-tile .video-labels{font-size:9px;inset:6px 6px auto;gap:3px}
+.cctv .camera-tile .video-labels>span{padding:3px}
+.cctv .camera-tile .person-count-label{top:auto;bottom:34px;left:6px;font-size:10px}
+.cctv .camera-tile .timeline>div{flex-wrap:wrap}
+.cctv .camera-tile .playback-toolbar{padding:8px;gap:4px}
+.cctv .camera-tile .playback-toolbar button{font-size:10px;padding:6px}
+.cctv .camera-tile.tile-expanded{grid-column:1/-1}
+.cctv .multi-controls{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.cctv .multi-controls>span{font-size:12px;color:var(--muted)}
+.cctv .display-metrics{position:absolute;top:48px;right:6px;font-size:9px;background:#0b1223dc;padding:3px;color:#bed2ed}
+.local-demo-banner{margin-left:176px;background:#493719;color:#ffe0a1;border-bottom:1px solid #8f6d30;padding:10px 18px;font:13px/1.5 'Malgun Gothic',sans-serif}
+@media(max-width:1200px){.local-demo-banner{margin-left:150px}}
+@media(max-width:650px){.local-demo-banner{margin-left:0}}
+.local-demo-entry{padding:12px;border:1px solid #547ba5;border-radius:8px;margin:16px 0;background:#14263c;color:#d5e5f7;font-size:12px;line-height:1.7}
+.cctv .empty-feed p{font-size:11px;color:var(--muted);padding:0 12px;text-align:center}
+.cctv .webrtc-video{width:100%;height:100%;object-fit:contain}
+.cctv .dvr-picture .webrtc-overlay{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;pointer-events:none}
+.cctv .webrtc-metrics{position:absolute;right:6px;top:48px;font-size:9px;background:#0b1223dc;color:#c8dff5;padding:4px}
+.cctv .webrtc-analysis{position:absolute;bottom:8px;left:8px;right:8px;display:flex;flex-direction:column;gap:3px;color:#d1dfef;font-size:10px;max-height:65px;overflow:auto;pointer-events:none}
+.cctv .tracking-panel{padding:16px;margin-bottom:16px;font-size:12px}
+.cctv .tracking-list{max-height:320px;overflow:auto}
+.cctv .tracking-list details{padding:10px 0;border-top:1px solid var(--border)}
+.cctv .tracking-list form{display:flex;flex-wrap:wrap;gap:12px;align-items:end}
+.cctv .tracking-list label{display:grid;gap:5px}
+.cctv .local-preview video{max-height:50vh}
+@media(max-width:1050px){.cctv .multi-camera-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:700px){.cctv .multi-camera-grid{grid-template-columns:1fr}}

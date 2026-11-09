@@ -1,0 +1,14 @@
+{
+  "native_not_docker": true,
+  "synthetic_not_phone": true,
+  "stage": "tls_ready",
+  "tls_probe_version": "TLSv1.3",
+  "rtmps_certificate_verified": true,
+  "success": false,
+  "failure_type": "TimeoutError",
+  "limitations": [
+    "Synthetic FFmpeg sources and detector fixture; no trained YOLO or Larix hardware",
+    "Local CA TLS; no public DNS certificate or AWS test",
+    "Docker unavailable"
+  ]
+}

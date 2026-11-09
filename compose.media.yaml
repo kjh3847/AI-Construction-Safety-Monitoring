@@ -1,0 +1,45 @@
+# Merge with compose.monitor.yaml. Existing account/recording volumes remain unchanged.
+services:
+  mediamtx:
+    image: bluenviron/mediamtx:1.21.3
+    restart: unless-stopped
+    environment:
+      MTX_WEBRTCADDITIONALHOSTS: ${STREAM_PUBLIC_HOST:?Set the public DNS hostname}
+      MTX_WEBRTCIPSFROMINTERFACES: 'false'
+    volumes:
+      - ./deploy/mediamtx.yml:/mediamtx.yml:ro
+      - ./.secrets/media-tls:/certs:ro
+    ports:
+      - '1936:1936/tcp'
+      - '8189:8189/udp'
+      - '8189:8189/tcp'
+    depends_on:
+      - media-auth
+    networks: [default, media]
+    logging:
+      driver: json-file
+      options: {max-size: 10m, max-file: '5'}
+  media-auth:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.media-auth
+    env_file: .env.media
+    restart: unless-stopped
+    networks: [media]
+    logging:
+      driver: json-file
+      options: {max-size: 10m, max-file: '5'}
+  monitor:
+    env_file: [.env, .env.media]
+    environment:
+      MEDIA_ENABLED: 'true'
+      MEDIA_RTSP_URL: rtsp://mediamtx:8554
+      MEDIA_API_URL: http://mediamtx:9997
+      MEDIA_WEBRTC_URL: http://mediamtx:8889
+    networks: [default, media]
+    depends_on:
+      postgres: {condition: service_healthy}
+      mediamtx: {condition: service_started}
+networks:
+  media:
+    internal: true

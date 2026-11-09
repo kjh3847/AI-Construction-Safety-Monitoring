@@ -1,0 +1,13 @@
+.git
+.env*
+.secrets
+.local-run
+.venv*
+node_modules
+dist
+models
+artifacts
+*.log
+backend/*.db*
+backend/recordings
+**/__pycache__

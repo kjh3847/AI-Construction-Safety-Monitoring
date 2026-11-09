@@ -20,6 +20,7 @@ def video_client(storage):
             patch.dict(sys.modules, {'ultralytics': fake}):
         try:
             main = importlib.import_module('main')
+            main.model.loaded = fake.YOLO('test-only')
             main.app.dependency_overrides[monitor_user] = lambda: {
                 'employee_id': 'VIDEO_TEST', 'role': 'admin', 'must_change_password': False}
             with patch.object(main, 'init_identity'), \
