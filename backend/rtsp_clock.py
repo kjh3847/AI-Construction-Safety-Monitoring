@@ -95,7 +95,10 @@ class RTSPClockCapture:
         data=bytes(self.buffer[:count]);del self.buffer[:count];return data
 
     def _message(self):
-        if not self.buffer:self.buffer.extend(self._take(1))
+        if not self.buffer:
+            data=self.sock.recv(65536)
+            if not data:raise ConnectionError('RTSP closed')
+            self.buffer.extend(data)
         if self.buffer[0]==36:
             header=self._take(4)
             return header[1],self._take(struct.unpack('!H',header[2:])[0])

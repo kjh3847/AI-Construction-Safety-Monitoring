@@ -17,7 +17,11 @@ const accountProxy = () => ({
   },
 });
 
-export default defineConfig({server:{port:5173,strictPort:true,proxy:{
+export default defineConfig({server:{port:5173,strictPort:true,
+  // Recording frames change continuously; watching runtime trees can starve
+  // the development proxy and delay WHEP handshakes past their deadline.
+  watch:{ignored:['**/.local-run/**','**/.secrets/**','**/models/**','**/backend/recordings/**','**/.venv/**']},
+  proxy:{
   '/api/auth': accountProxy(),
   '/api/admin': accountProxy(),
   '/api':{target:process.env.MONITOR_API_URL || 'http://127.0.0.1:8002',ws:true},

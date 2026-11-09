@@ -40,6 +40,7 @@ function CameraTile({camera, status, connection, jump, onFrame}) {
       <button className="danger-button" disabled={busy || !['running','starting','reconnecting','disconnected'].includes(status?.state)} onClick={()=>control('stop')}>중단</button>
     </div>
     <p className="small-note">입력 {status?.metrics?.capture_fps ?? '—'} FPS · 분석 {status?.metrics?.analysis_fps ?? '—'} FPS · 처리 지연 {status?.metrics?.frame_age_ms ?? '—'} ms</p>
+    {status?.relay && <p className="small-note">영상 {status.relay.online ? '연결됨' : '연결 안 됨'} · 최근 수신 {status.relay.last_received ? new Date(status.relay.last_received*1000).toLocaleTimeString('ko-KR') : '대기'} · AI {stateLabel[status?.state] ?? status?.state}</p>}
     <p className="small-note">현재 감지 {status?.current_counts?.person_count ?? '—'}명 · 미착용 추정 {status?.current_counts?.noncompliant_person_count ?? '—'}명</p>
     {status?.duplicate_source && <p className="connection-note">다른 카메라와 입력 주소가 중복됩니다.</p>}
     {(message || status?.error || status?.storage_error) && <p className="connection-note" role="status">{message || status?.error || status?.storage_error}</p>}

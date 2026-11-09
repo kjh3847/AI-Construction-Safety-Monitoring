@@ -109,13 +109,17 @@ class MediaGateway:
 
     def owned(self,key,request):
         lease=self.leases.get(key)
-        if not lease or lease['owner']!=self.cookie_hash(request):raise HTTPException(404,'Media session not found')
+        if not lease or lease.get('revoked') or lease['owner']!=self.cookie_hash(request):raise HTTPException(404,'Media session not found')
         return lease
 
     async def delete(self,key):
-        lease=self.leases.pop(key,None)
+        lease=self.leases.get(key)
         if lease:
+            lease.update(revoked=True,expires=0)
             try:
                 async with httpx.AsyncClient(timeout=2,trust_env=False) as client:
-                    await client.delete(lease['url'],auth=self.auth('web'))
-            except httpx.HTTPError:pass
+                    response=await client.delete(lease['url'],auth=self.auth('web'))
+                    if response.is_success or response.status_code==404:self.leases.pop(key,None)
+            except (httpx.HTTPError,HTTPException):pass
+            # A transient control-plane failure must not forget a still-playing
+            # revoked viewer. The watcher retries deletion on its next pass.

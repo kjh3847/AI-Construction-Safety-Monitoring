@@ -5,10 +5,10 @@
     "bytes": 891549,
     "provider": "CPUExecutionProvider",
     "intra_op_threads": 1,
-    "load_and_first_inference_ms": 233.491,
-    "crop_inference_median_ms": 12.625,
-    "cpu_ms_per_crop": 13.021,
-    "process_rss_bytes": 85794816,
+    "load_and_first_inference_ms": 178.062,
+    "crop_inference_median_ms": 11.995,
+    "cpu_ms_per_crop": 12.5,
+    "process_rss_bytes": 85966848,
     "input": "synthetic RGB texture; no real identity labels",
     "shape": [
       512
@@ -20,10 +20,10 @@
     "bytes": 8729490,
     "provider": "CPUExecutionProvider",
     "intra_op_threads": 1,
-    "load_and_first_inference_ms": 569.792,
-    "crop_inference_median_ms": 576.261,
-    "cpu_ms_per_crop": 555.208,
-    "process_rss_bytes": 107233280,
+    "load_and_first_inference_ms": 543.263,
+    "crop_inference_median_ms": 475.309,
+    "cpu_ms_per_crop": 473.958,
+    "process_rss_bytes": 107950080,
     "input": "synthetic RGB texture; no real identity labels",
     "shape": [
       512

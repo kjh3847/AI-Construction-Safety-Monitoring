@@ -1,5 +1,9 @@
 # Windows 로컬 실행 및 실제 브라우저 검증
 
+> 재개 후 최신 상태: [CODEX-PROGRESS.md](CODEX-PROGRESS.md), [LIVE-STREAM-REPORT.md](LIVE-STREAM-REPORT.md).
+> 아래 최초 실행 기록 이후 CAM-01 직접 입력 설정이 추가되었으며 해당 설정은 보존했다.
+> 기본 대시보드와 합성 MediaMTX 통합 시험은 서로 다른 포트/DB를 사용한다. 기본 화면에 합성 영상을 자동 표시하지 않는다.
+
 2026-11-10에 기존 변경 사항을 유지하며 실행했습니다. AWS 배포, GitHub push, 운영 DB 접속은 수행하지 않았습니다.
 
 ## 접속

@@ -12,6 +12,7 @@ export default function WebRTCLive({cameraId,status,paused,onFrame}){
   useEffect(()=>{
     let active=true,pc=null,socket=null,resource=null,retry=null,heartbeat=null,metadataRetry=null,frameCallback=null;
     let received=0,clock=performance.now(),buffer=new MetadataBuffer(cameraId),alignedFrames=0;
+    let attempt=0,offerAbort=null,connectionDeadline=null,lastMetadata=0,lastRendered=performance.now();
     setAnalysis(null);setAligned(false);setFps(0);setMessage(status?.relay?.online?'WebRTC 연결 중':'스마트폰 송출 대기');
     const element=video.current,overlay=canvas.current,context=overlay.getContext('2d');
     context.clearRect(0,0,overlay.width,overlay.height);
@@ -19,6 +20,7 @@ export default function WebRTCLive({cameraId,status,paused,onFrame}){
       if(!active)return;
       if(!pauseRef.current && element.videoWidth){
         received++;
+        lastRendered=now;
         if(now-clock>=1000){setFps(received*1000/(now-clock));received=0;clock=now;}
         overlay.width=element.videoWidth;overlay.height=element.videoHeight;
         const meta=buffer.exact(frame.rtpTimestamp);
@@ -37,6 +39,7 @@ export default function WebRTCLive({cameraId,status,paused,onFrame}){
       frameCallback=element.requestVideoFrameCallback(render);
     }
     function cleanupConnection(){
+      attempt++;offerAbort?.abort();clearTimeout(connectionDeadline);
       clearInterval(heartbeat);
       if(pc){pc.onconnectionstatechange=null;pc.close();pc=null;}
       if(resource){accountRequest(resource,{method:'DELETE'}).catch(()=>{});resource=null;}
@@ -44,49 +47,61 @@ export default function WebRTCLive({cameraId,status,paused,onFrame}){
     }
     async function connect(){
       if(!active || !status?.relay?.online)return;
+      const serial=++attempt;
       try{
-        pc=new RTCPeerConnection();pc.addTransceiver('video',{direction:'recvonly'});
-        pc.ontrack=event=>{
+        const peer=new RTCPeerConnection();pc=peer;peer.addTransceiver('video',{direction:'recvonly'});
+        const current=()=>active && serial===attempt;
+        connectionDeadline=setTimeout(()=>{if(current()){setMessage('영상 연결 시간 초과 · 재연결 중');cleanupConnection();retry=setTimeout(connect,3000);}},20000);
+        peer.ontrack=event=>{
+          if(!current())return;
           element.srcObject=new MediaStream([event.track]);if(!pauseRef.current)element.play().catch(()=>{});
           if(element.requestVideoFrameCallback)frameCallback=element.requestVideoFrameCallback(render);
           else setMessage('프레임 동기화 미지원 · 위치 텍스트 숨김');
         };
-        pc.onconnectionstatechange=()=>{
-          if(!active)return;
-          if(pc.connectionState==='connected')setMessage('');
-          if(['failed','disconnected'].includes(pc.connectionState)){setMessage('영상 연결 끊김 · 재연결 중');cleanupConnection();retry=setTimeout(connect,3000);}
+        peer.onconnectionstatechange=()=>{
+          if(!current())return;
+          if(peer.connectionState==='connected'){setMessage('');clearTimeout(connectionDeadline);}
+          if(['failed','disconnected'].includes(peer.connectionState)){setMessage('영상 연결 끊김 · 재연결 중');cleanupConnection();retry=setTimeout(connect,3000);}
         };
-        await pc.setLocalDescription(await pc.createOffer());
-        if(pc.iceGatheringState!=='complete')await new Promise(resolve=>{
+        await peer.setLocalDescription(await peer.createOffer());
+        if(peer.iceGatheringState!=='complete')await new Promise(resolve=>{
           const timeout=setTimeout(resolve,3000);
-          pc.addEventListener('icegatheringstatechange',()=>{if(pc?.iceGatheringState==='complete'){clearTimeout(timeout);resolve();}});
+          peer.addEventListener('icegatheringstatechange',()=>{if(peer.iceGatheringState==='complete'){clearTimeout(timeout);resolve();}});
         });
-        if(!active)return;
+        if(!current())return;
+        offerAbort=new AbortController();
         const response=await fetch(`${API_BASE}/api/media/${cameraId}/whep`,{method:'POST',credentials:'include',
-          headers:{'Content-Type':'application/sdp'},body:pc.localDescription.sdp,signal:AbortSignal.timeout(12000)});
+          headers:{'Content-Type':'application/sdp'},body:peer.localDescription.sdp,signal:AbortSignal.any([offerAbort.signal,AbortSignal.timeout(12000)])});
         if(!response.ok)throw new Error('송출 대기 또는 WebRTC 연결 실패');
-        resource=response.headers.get('Location');
-        if(!active){if(resource)accountRequest(resource,{method:'DELETE'}).catch(()=>{});return;}
-        await pc.setRemoteDescription({type:'answer',sdp:await response.text()});
-        for(const receiver of pc.getReceivers())if('jitterBufferTarget' in receiver)receiver.jitterBufferTarget=150;
+        const location=response.headers.get('Location');
+        if(!current()){if(location)accountRequest(location,{method:'DELETE'}).catch(()=>{});return;}
+        if(!location?.startsWith('/api/media/sessions/'))throw new Error('영상 세션 응답 오류');
+        resource=location;
+        await peer.setRemoteDescription({type:'answer',sdp:await response.text()});
+        if(!current())return;
+        for(const receiver of peer.getReceivers())if('jitterBufferTarget' in receiver)receiver.jitterBufferTarget=150;
         heartbeat=setInterval(async()=>{
           try{
-            await accountRequest(resource+'/keepalive',{method:'POST'});
-            for(const report of (await pc.getStats()).values())if(report.type==='inbound-rtp' && report.kind==='video' && report.jitterBufferEmittedCount)
+            await accountRequest(location+'/keepalive',{method:'POST'});
+            for(const report of (await peer.getStats()).values())if(current() && report.type==='inbound-rtp' && report.kind==='video' && report.jitterBufferEmittedCount)
               setLatency(1000*report.jitterBufferDelay/report.jitterBufferEmittedCount);
-          }catch{cleanupConnection();if(active)retry=setTimeout(connect,3000);}
+          }catch{if(current()){cleanupConnection();retry=setTimeout(connect,3000);}}
         },10000);
-      }catch(error){if(active){setMessage(error.message);cleanupConnection();retry=setTimeout(connect,3000);}}
+      }catch(error){if(active && serial===attempt){setMessage(error.message);cleanupConnection();retry=setTimeout(connect,3000);}}
     }
     function metadata(){
       if(!active)return;
       const url=new URL(`${API_BASE}/api/metadata/${cameraId}`,window.location.href);url.protocol=url.protocol==='https:'?'wss:':'ws:';
       socket=new WebSocket(url);
-      socket.onmessage=event=>{try{const meta=JSON.parse(event.data);if(buffer.add(meta))setAnalysis(meta);}catch{}};
+      socket.onmessage=event=>{try{const meta=JSON.parse(event.data);if(buffer.add(meta)){lastMetadata=performance.now();setAnalysis(meta);}}catch{}};
       socket.onclose=()=>{if(active)metadataRetry=setTimeout(metadata,2000);};
     }
     connect();metadata();
-    return()=>{active=false;clearTimeout(retry);clearTimeout(metadataRetry);socket?.close(1000);cleanupConnection();element.srcObject=null;};
+    const freshness=setInterval(()=>{
+      if(performance.now()-lastMetadata>5000){setAnalysis(null);setAligned(false);}
+      if(performance.now()-lastRendered>2000)setFps(0);
+    },1000);
+    return()=>{active=false;clearInterval(freshness);clearTimeout(retry);clearTimeout(metadataRetry);socket?.close(1000);cleanupConnection();element.srcObject=null;};
   },[cameraId,status?.relay?.online,status?.relay?.ready_time]);
   return <>
     <video ref={video} className="webrtc-video" autoPlay muted playsInline aria-label={`${cameraId} WebRTC 실시간 영상`}/>

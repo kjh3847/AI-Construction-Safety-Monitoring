@@ -2,13 +2,14 @@ import asyncio
 import os
 import struct
 import unittest
+import httpx
 from types import SimpleNamespace
 from unittest.mock import patch,AsyncMock
 
 from fastapi import HTTPException
 from media_auth import MediaIdentity,authorized
 from media_gateway import MediaGateway
-from rtsp_clock import H264RTP,rtp_payload
+from rtsp_clock import H264RTP,rtp_payload,RTSPClockCapture
 
 
 class StreamPermissionTests(unittest.TestCase):
@@ -34,6 +35,18 @@ class StreamPermissionTests(unittest.TestCase):
 
 
 class RTPTests(unittest.TestCase):
+    def test_coalesced_rtsp_response_and_rtp_preserve_wire_order(self):
+        payload=b'frame-data'
+        response=b'RTSP/1.0 200 OK\r\nContent-Length: 3\r\n\r\nsdp'
+        wire=response+b'$\x00'+struct.pack('!H',len(payload))+payload
+        capture=RTSPClockCapture.__new__(RTSPClockCapture)
+        capture.buffer=bytearray()
+        capture.sock=SimpleNamespace(recv=lambda size:wire)
+        headers,body=capture._message()
+        self.assertEqual(body,b'sdp')
+        self.assertEqual(capture._message(),(0,payload))
+        self.assertEqual(capture.buffer,bytearray())
+
     def packet(self,payload,marker=False,timestamp=123):
         return struct.pack('!BBHII',128,96+(128 if marker else 0),1,timestamp,42)+payload
     def test_fragmentation_preserves_timestamp_and_annexb(self):
@@ -63,3 +76,29 @@ class GatewayTests(unittest.TestCase):
         with self.assertRaises(HTTPException):gateway.path('CAM-01')
         gateway.enabled=True
         with self.assertRaises(HTTPException):gateway.path('../../admin')
+
+
+class GatewayAsyncTests(unittest.IsolatedAsyncioTestCase):
+    async def test_revoked_viewer_delete_retries_after_control_failure(self):
+        gateway=MediaGateway()
+        request=SimpleNamespace(cookies={'safety_session':'session'})
+        gateway.leases['lease']={'owner':gateway.cookie_hash(request),'url':'http://media.invalid/cam01/whep/id','expires':100}
+        client=AsyncMock()
+        client.delete.side_effect=[httpx.ConnectError('offline'),httpx.Response(204)]
+        context=AsyncMock();context.__aenter__.return_value=client
+        with patch.dict(os.environ,{'MEDIA_WEB_PASSWORD':'test-only'}),patch('media_gateway.httpx.AsyncClient',return_value=context):
+            await gateway.delete('lease')
+            self.assertTrue(gateway.leases['lease']['revoked'])
+            with self.assertRaises(HTTPException):gateway.owned('lease',request)
+            await gateway.delete('lease')
+            self.assertNotIn('lease',gateway.leases)
+
+    async def test_upstream_session_location_cannot_escape_camera_path(self):
+        gateway=MediaGateway();gateway.enabled=True
+        client=AsyncMock();context=AsyncMock();context.__aenter__.return_value=client
+        for location in ('/admin','/cam02/whep/id','/cam01/whep/../admin'):
+            client.post.return_value=httpx.Response(201,headers={'location':location},content=b'sdp')
+            with patch.dict(os.environ,{'MEDIA_WEB_PASSWORD':'test-only'}),patch('media_gateway.httpx.AsyncClient',return_value=context):
+                with self.assertRaises(HTTPException):
+                    await gateway.offer('CAM-01',b'offer',SimpleNamespace(cookies={}))
+            self.assertFalse(gateway.leases)

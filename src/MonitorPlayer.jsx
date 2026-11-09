@@ -202,10 +202,10 @@ export default function MonitorPlayer({ cameraId, status, connection, enabled, o
       {frame?.source_kind === 'test' && <span className="source-label">테스트 영상 · {frame.source_name} · 원본 {frame.video_seconds.toFixed(1)}초</span>}
       {connection === 'ready' && frame && (fresh || mode === 'past' || paused) && <span className="person-count-label">미착용 추정 {frame.noncompliant_person_count == null ? '—' : `${frame.noncompliant_person_count}명`}{frame.unassigned_negative_count > 0 ? ` · 연결 불가 ${frame.unassigned_negative_count}건` : ''}</span>}
       {connection === 'ready' && frame && (fresh || mode === 'past' || paused) && <span className={`risk-label ${frame.negative_detection_count > 0 ? 'signal-danger' : 'signal-good'}`}>{frame.negative_detection_count > 0 ? '⚠ 보호구 미착용 의심 감지' : '✓ 미착용 클래스 감지 없음'}</span>}
-      {fresh && mode === 'live' && !paused && <span className="display-metrics">표시 {displayFps.toFixed(1)} FPS · 수신 {(transferRate/1024).toFixed(1)} KiB/s</span>}
+      {fresh && mode === 'live' && !paused && !webRTC && <span className="display-metrics">표시 {displayFps.toFixed(1)} FPS · 수신 {(transferRate/1024).toFixed(1)} KiB/s</span>}
     </div>
     <div className="playback-toolbar">
-      <button onClick={togglePause} disabled={!frame || !enabled} title="화면만 일시정지합니다. 서버 감지와 녹화는 계속됩니다.">{paused ? <Play size={16}/> : <Pause size={16}/>} {paused ? '재생' : '화면 일시정지'}</button>
+      <button onClick={togglePause} disabled={(!frame && !webRTC) || !enabled} title="화면만 일시정지합니다. 서버 감지와 녹화는 계속됩니다.">{paused ? <Play size={16}/> : <Pause size={16}/>} {paused ? '재생' : '화면 일시정지'}</button>
       <button onClick={() => seek((position ?? bounds.end) - 10)} disabled={!available || !enabled}><SkipBack size={16}/>10초 전</button>
       <button onClick={() => seek((position ?? bounds.end) + 10)} disabled={!available || !enabled}><SkipForward size={16}/>10초 후</button>
       <button onClick={goLive} disabled={!available || !enabled} className="live-button"><Radio size={16}/>실시간으로 돌아가기</button>

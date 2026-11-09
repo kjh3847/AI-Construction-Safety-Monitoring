@@ -227,13 +227,19 @@ class Monitor:
                 if self.global_tracker:
                     vectors = self.global_tracker.encoder.encode(frame, people)
                     # RTP time aligns this stream's frames but is not a trusted
-                    # capture clock shared between phones. Cross-camera matching
-                    # is disabled unless clock bounds were independently verified.
-                    if self.adapter=='mediamtx' and os.getenv('PUSH_CAPTURE_CLOCK_VERIFIED','false').lower()!='true':
+                    # capture clock shared between phones. An environment switch
+                    # alone cannot establish a trustworthy sender capture time.
+                    identity_time=captured
+                    clock_info=live_reader.consumed_clock if live_reader else {}
+                    if self.adapter=='mediamtx' and not (
+                            clock_info.get('clock_trust')=='verified-capture'
+                            and isinstance(clock_info.get('capture_time'),(int,float))):
                         vectors=[None]*len(people)
+                    elif self.adapter=='mediamtx':
+                        identity_time=clock_info['capture_time']
                     identities = self.global_tracker.observe(self.camera_id,
                         f'{source_id if self.source_kind == "test" else self.recording_id}:{last_generation}',
-                        people, captured, vectors, violations)
+                        people, identity_time, vectors, violations)
                 for person in association['person_safety']:
                     detection = detections[person['detection_index']]
                     person.update(bbox=detection['bbox'], local_track_id=detection['track_id'],
@@ -249,6 +255,7 @@ class Monitor:
                 jpeg = buffer.tobytes()
                 meta = {'recording_id': self.recording_id, 'frame_id': frame_id,
                     'timestamp': captured, 'captured_at': datetime.fromtimestamp(captured, timezone.utc).isoformat(),
+                    'timestamp_basis':'server-receive' if self.source_kind!='test' else 'test-playback',
                     'video_seconds': video_seconds, 'camera_id':self.camera_id, 'camera_name': self.camera_name,
                     'source_kind': self.source_kind, 'source_name': self.source_name,
                     'detections': detections, 'annotation_mode':'text-metadata',

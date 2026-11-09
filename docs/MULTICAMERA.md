@@ -1,5 +1,9 @@
 # 3대 동시 관제 실행과 운영 (2026-11-10)
 
+스마트폰 Push 입력과 WebRTC 추가 사항은 [AWS/MediaMTX 구성](AWS-LIVE-STREAM-DEPLOY.md),
+[Larix 설정](PHONE-LIVE-STREAM-SETUP.md), [최신 검증 결과](LIVE-STREAM-REPORT.md)를 먼저 확인한다.
+아래 직접 카메라/바이너리 전송 기능은 보존된다. Push 간 자동 ReID 연결은 공통 촬영 시계 검증 전까지 비활성이다.
+
 ## 변경 범위와 데이터 흐름
 
 기존 FastAPI·React·PostgreSQL 계정·SQLite 이벤트·JPEG DVR 구조를 확장했습니다.

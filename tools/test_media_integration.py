@@ -10,6 +10,7 @@ import ssl
 import subprocess
 import sys
 import time
+import traceback
 import urllib.request
 from urllib.parse import urlencode
 
@@ -39,7 +40,10 @@ def tls(directory):
 
 
 def main():
-    parser=argparse.ArgumentParser();parser.add_argument('--keep',action='store_true');args=parser.parse_args()
+    parser=argparse.ArgumentParser();parser.add_argument('--real-app',action='store_true',help='Run production main:app without the synthetic detector');args=parser.parse_args()
+    for port in (18003,11936,18554,19997,18889,18189,18002,15173):
+        with socket.socket() as probe:
+            probe.bind(('127.0.0.1',port))
     work=ROOT/'.local-run'/'media-integration'
     if work.exists():
         work=ROOT/'.local-run'/('media-integration-'+str(int(time.time())))
@@ -54,8 +58,8 @@ def main():
         rtmpServerKey=str(work/'tls/privkey.pem'),rtmpServerCert=str(work/'tls/fullchain.pem'))
     (work/'mediamtx.yml').write_text(yaml.safe_dump(config),encoding='utf-8')
     env={**os.environ,**credentials,'PUBLIC_APP_URL':'http://127.0.0.1:15173','COOKIE_SECURE':'false',
-        'LOCAL_DEMO_ENABLED':'true','DATABASE_URL':'','SAFETY_DB_PATH':str(ROOT/'.local-run/demo/media-test-events.sqlite3'),
-        'MONITOR_STORAGE_DIR':str(ROOT/'.local-run/demo/media-test-recordings'),
+        'LOCAL_DEMO_ENABLED':'true','DATABASE_URL':'','SAFETY_DB_PATH':str(ROOT/'.local-run/demo'/work.name/'events.sqlite3'),
+        'MONITOR_STORAGE_DIR':str(ROOT/'.local-run/demo'/work.name/'recordings'),
         'MEDIA_ENABLED':'true','MEDIA_TEST_SOURCE':'true','MEDIA_RTSP_URL':'rtsp://127.0.0.1:18554',
         'MEDIA_API_URL':'http://127.0.0.1:19997','MEDIA_WEBRTC_URL':'http://127.0.0.1:18889',
         'REID_MODEL_PATH':str(ROOT/'models/osnet_x0_25.onnx'),'REID_PRELOAD':'true',
@@ -89,7 +93,10 @@ def main():
             '-vf',f'hue=h={number*80}','-an','-c:v','libx264','-preset','ultrafast','-tune','zerolatency',
             '-pix_fmt','yuv420p','-profile:v','baseline','-g','15','-bf','0','-tls_verify','1','-ca_file',str(work/'tls/ca.pem'),'-f','flv',target]
         return launch(f'publisher-{number}-{len(children)}',command)
-    result={'native_not_docker':True,'synthetic_not_phone':True}
+    result={'native_not_docker':True,'synthetic_not_phone':True,'synthetic_detector':not args.real_app}
+    def stage(name):
+        result['stage']=name
+        print('Stage:',name,flush=True)
     try:
         launch('auth',[sys.executable,'-m','uvicorn','media_auth:app','--host','127.0.0.1','--port','18003','--no-access-log'])
         wait(lambda:http_ready('http://127.0.0.1:18003/health'))
@@ -106,38 +113,100 @@ def main():
         wait(tls_ready);result['rtmps_certificate_verified']=True
         result.pop('tls_probe_error',None);result['stage']='tls_ready'
         for number in range(1,4):publishers[number]=publish(number)
-        launch('backend',[sys.executable,'-m','uvicorn','media_fixture_app:app','--host','127.0.0.1','--port','18002','--no-proxy-headers','--no-access-log'])
-        launch('frontend',['node',str(ROOT/'node_modules/vite/bin/vite.js'),'--host','127.0.0.1','--port','15173','--strictPort'])
+        launch('backend',[sys.executable,'-m','uvicorn','main:app' if args.real_app else 'media_fixture_app:app','--host','127.0.0.1','--port','18002','--no-proxy-headers','--no-access-log'])
+        node=ROOT/'.local-run/node-lts/node.exe'
+        launch('frontend',[str(node) if node.is_file() else 'node',str(ROOT/'node_modules/vite/bin/vite.js'),'--host','127.0.0.1','--port','15173','--strictPort'])
         wait(lambda:http_ready('http://127.0.0.1:18002/health'),40)
         wait(lambda:http_ready('http://127.0.0.1:15173'))
+        stage('services_ready')
         from playwright.sync_api import sync_playwright,expect
         with sync_playwright() as p:
-            browser=p.chromium.launch(headless=True)
+            stage('browser_launch')
+            browser=p.chromium.launch(headless=True,timeout=30000)
             page=browser.new_page(viewport={'width':1800,'height':1100})
+            page.add_init_script("""window.__peers=[];const Native=window.RTCPeerConnection;
+                window.RTCPeerConnection=class extends Native {constructor(...args){super(...args);window.__peers.push(this);}};""")
+            def browser_log(line):
+                with (work/'browser.log').open('a',encoding='utf-8') as log:log.write(line+'\n')
+            page.on('console',lambda message:browser_log(message.type+': '+message.text))
+            page.on('response',lambda response:browser_log(str(response.status)+' '+response.url) if '/api/media/' in response.url else None)
             errors=[];page.on('pageerror',lambda e:errors.append(str(e)))
+            stage('login')
             page.goto('http://127.0.0.1:15173')
             page.get_by_role('button',name='로컬 데모로 대시보드 보기').click()
-            page.wait_for_function("Array.from(document.querySelectorAll('.webrtc-video')).length===3 && Array.from(document.querySelectorAll('.webrtc-video')).every(v=>v.videoWidth>0)",timeout=45000)
-            page.wait_for_function("Array.from(document.querySelectorAll('.webrtc-video')).every(v=>Number(v.dataset.alignedFrames)>2)",timeout=45000)
-            result['three_webrtc_and_exact_rtp_overlay']=True
-            page.wait_for_timeout(4000)
+            stage('three_video_playback')
+            try:
+                page.wait_for_function("Array.from(document.querySelectorAll('.webrtc-video')).length===3 && Array.from(document.querySelectorAll('.webrtc-video')).every(v=>v.videoWidth>0)",timeout=45000)
+            except Exception:
+                browser_log(json.dumps(page.evaluate("window.__peers.map(p=>({connection:p.connectionState,ice:p.iceConnectionState,local:p.localDescription?.sdp,remote:p.remoteDescription?.sdp}))")))
+                page.screenshot(path=str(work/'failure.png'),timeout=5000)
+                raise
+            result['three_webrtc_playback']=True
+            if not args.real_app:
+                stage('exact_rtp_overlay')
+                page.wait_for_function("Array.from(document.querySelectorAll('.webrtc-video')).every(v=>Number(v.dataset.alignedFrames)>2)",timeout=45000)
+                result['three_webrtc_and_exact_rtp_overlay']=True
+            else:
+                result['runtime']=page.request.get('http://127.0.0.1:15173/api/runtime').json()
+                assert result['runtime']['yolo_state']=='missing','This scenario specifically checks absent trained weights'
+                result['video_without_yolo_model']=True
+            page.wait_for_timeout(11000)
+            stage('controls_and_security')
             result['display_metrics']=page.locator('.webrtc-metrics').all_text_contents()
             result['video_dimensions']=page.locator('.webrtc-video').evaluate_all('(items)=>items.map(v=>[v.videoWidth,v.videoHeight])')
             states=page.request.get('http://127.0.0.1:15173/api/cameras').json()
             result['analysis_metrics']=[{'camera_id':c['camera_id'],'metrics':c['metrics']} for c in states['cameras']]
             assert all(c['relay']['online'] for c in states['cameras'])
+            tile=page.locator('[data-camera-id="CAM-01"]')
+            tile.get_by_role('button',name='화면 일시정지',exact=True).click()
+            assert tile.locator('video').evaluate('v=>v.paused')
+            tile.get_by_role('button',name='재생',exact=True).click()
+            page.wait_for_function("!document.querySelector('[data-camera-id=\"CAM-01\"] video').paused")
+            tile.get_by_role('button',name='전체화면',exact=True).click()
+            page.wait_for_function('document.fullscreenElement !== null')
+            page.evaluate('document.exitFullscreen()')
+            result['pause_and_fullscreen']=True
+            if not args.real_app:
+                result['transport_comparison']=page.evaluate("""async()=>{
+                    const peers=window.__peers.filter(p=>p.connectionState==='connected');
+                    const stats=async()=>Promise.all(peers.map(async p=>[...(await p.getStats()).values()].find(s=>s.type==='inbound-rtp' && s.kind==='video')));
+                    const first=await stats();let frames=0,bytes=0;
+                    const socket=new WebSocket(location.origin.replace('http:','ws:')+'/api/live/CAM-01');socket.binaryType='arraybuffer';
+                    socket.onmessage=e=>{frames++;bytes+=e.data.byteLength;};
+                    const start=performance.now();await new Promise(r=>setTimeout(r,5000));socket.close();
+                    const seconds=(performance.now()-start)/1000,last=await stats();
+                    return {seconds,binary_cam01:{fps:frames/seconds,bytes_per_second:bytes/seconds},
+                      webrtc:last.map((s,i)=>({fps:(s.framesDecoded-first[i].framesDecoded)/seconds,bytes_per_second:(s.bytesReceived-first[i].bytesReceived)/seconds,
+                        jitter_buffer_ms:1000*s.jitterBufferDelay/s.jitterBufferEmittedCount}))};
+                }""")
+                assert result['transport_comparison']['binary_cam01']['fps']>0
+                for metric in result['transport_comparison']['webrtc']:assert metric['fps']>10
+                assert page.request.get('http://127.0.0.1:15173/api/events').json()['events']
+                assert page.request.get('http://127.0.0.1:15173/api/recordings/frame?camera_id=CAM-01').status==200
+                result['event_and_recording_saved']=True
             before=page.locator('[data-camera-id="CAM-02"] video').evaluate('v=>v.currentTime')
+            old_ready=states['cameras'][0]['relay']['ready_time']
             publishers[1].terminate();publishers[1].wait(timeout=5)
-            page.wait_for_timeout(4000)
+            wait(lambda:not page.request.get('http://127.0.0.1:15173/api/cameras').json()['cameras'][0]['relay']['online'])
             after=page.locator('[data-camera-id="CAM-02"] video').evaluate('v=>v.currentTime')
             assert after>before
             publishers[1]=publish(1)
+            wait(lambda:(lambda r:r['online'] and r['ready_time']!=old_ready)(page.request.get('http://127.0.0.1:15173/api/cameras').json()['cameras'][0]['relay']))
             page.wait_for_function("document.querySelector('[data-camera-id=\"CAM-01\"] video').videoWidth>0 && document.querySelector('[data-camera-id=\"CAM-01\"] video').currentTime>1",timeout=45000)
             result['publisher_restart_isolated']=True
             invalid=publish(1,path='cam02',password='invalid-test-password')
-            page.wait_for_timeout(2000)
-            assert invalid.poll() is not None
+            wait(lambda:invalid.poll() is not None)
+            assert invalid.returncode!=0
             result['invalid_publish_rejected']=True
+            invalid_path=publish(1,path='cam02')
+            wait(lambda:invalid_path.poll() is not None)
+            assert invalid_path.returncode!=0
+            result['valid_credentials_wrong_path_rejected']=True
+            import httpx
+            with httpx.Client(timeout=5,trust_env=False) as anonymous:
+                assert anonymous.post('http://127.0.0.1:18002/api/media/CAM-01/whep',content='v=0\r\n',headers={'origin':'http://127.0.0.1:15173','content-type':'application/sdp'}).status_code==401
+                assert anonymous.post('http://127.0.0.1:18889/cam01/whep',content='v=0\r\n',headers={'content-type':'application/sdp'}).status_code==401
+            result['anonymous_gateway_and_direct_view_rejected']=True
             assert page.request.post('http://127.0.0.1:15173/api/monitor/stop?camera_id=CAM-02',headers={'origin':'http://127.0.0.1:15173'}).status==200
             before=page.locator('[data-camera-id="CAM-02"] video').evaluate('v=>v.currentTime')
             page.wait_for_timeout(2000)
@@ -146,20 +215,44 @@ def main():
             page.screenshot(path=str(work/'three-channel-webrtc.png'),full_page=True)
             assert not errors,errors
             result['javascript_errors']=errors
+            assert page.request.post('http://127.0.0.1:15173/api/auth/logout',headers={'origin':'http://127.0.0.1:15173'}).status==200
+            def no_viewers():
+                with httpx.Client(timeout=5,trust_env=False) as client:
+                    response=client.get('http://127.0.0.1:19997/v3/webrtcsessions/list',auth=(credentials['MEDIA_CONTROL_USER'],credentials['MEDIA_CONTROL_PASSWORD']))
+                    response.raise_for_status()
+                    return len(response.json()['items'])==0
+            wait(no_viewers,15)
+            result['logout_revokes_active_media']=True
             browser.close()
+        stage('complete')
         result['success']=True
     except Exception as error:
         result['success']=False;result['failure_type']=type(error).__name__
+        # Tracebacks can contain request details. Keep diagnostics outside Git.
+        (work/'failure.txt').write_text(traceback.format_exc(),encoding='utf-8')
         print('Integration failure:',type(error).__name__,'See private logs in',work.name)
     finally:
-        if not args.keep:
+        if children:
+            import psutil
+            descendants=[]
+            for child in children:
+                if child.poll() is None:
+                    try:descendants.extend(psutil.Process(child.pid).children(recursive=True))
+                    except psutil.NoSuchProcess:pass
             for child in reversed(children):
                 if child.poll() is None:child.terminate()
             for child in reversed(children):
                 try:child.wait(timeout=5)
                 except subprocess.TimeoutExpired:child.kill()
-        result['limitations']=['Synthetic FFmpeg sources and detector fixture; no trained YOLO or Larix hardware','Local CA TLS; no public DNS certificate or AWS test','Docker unavailable']
-        output=ROOT/'docs/media-integration-result.json'
+            for process in reversed(descendants):
+                try:process.terminate()
+                except psutil.NoSuchProcess:pass
+            _,alive=psutil.wait_procs(descendants,timeout=5)
+            for process in alive:
+                try:process.kill()
+                except psutil.NoSuchProcess:pass
+        result['limitations']=['Synthetic FFmpeg sources; no trained YOLO or Larix hardware','Local CA TLS; no public DNS certificate or AWS test','Docker unavailable']
+        output=ROOT/('docs/media-no-model-result.json' if args.real_app else 'docs/media-integration-result.json')
         output.write_text(json.dumps(result,ensure_ascii=False,indent=2),encoding='utf-8')
         print(json.dumps(result,ensure_ascii=True,indent=2))
     if not result.get('success'):raise SystemExit(1)

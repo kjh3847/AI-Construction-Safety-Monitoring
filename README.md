@@ -1,5 +1,8 @@
 # 현장지킴 — AI 기반 건설현장 안전 모니터링
 
+> 스마트폰 RTMPS/WebRTC 개발 재개 결과: [진행 기록](docs/CODEX-PROGRESS.md), [검증 보고](docs/LIVE-STREAM-REPORT.md).
+> 실제 폰 설정은 [Larix 가이드](docs/PHONE-LIVE-STREAM-SETUP.md), 배포 준비는 [AWS 가이드](docs/AWS-LIVE-STREAM-DEPLOY.md)를 확인하세요. AWS 배포와 실제 3대 폰 검증은 아직 완료되지 않았습니다.
+
 > Windows에서 바로 화면을 확인하려면 [로컬 실행·브라우저 검증 안내](docs/LOCAL-RUN.md)를 사용하세요.
 > 계정 DB가 없는 경우 운영 계정과 분리된 로컬 데모로 3분할 화면을 열 수 있습니다.
 

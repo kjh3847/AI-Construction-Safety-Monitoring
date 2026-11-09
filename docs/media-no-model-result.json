@@ -1,0 +1,82 @@
+{
+  "native_not_docker": true,
+  "synthetic_not_phone": true,
+  "synthetic_detector": false,
+  "stage": "complete",
+  "tls_probe_version": "TLSv1.3",
+  "rtmps_certificate_verified": true,
+  "three_webrtc_playback": true,
+  "runtime": {
+    "local_demo": true,
+    "account_backend": "isolated-local-demo",
+    "yolo_state": "missing",
+    "reid_state": "ready",
+    "media_enabled": true
+  },
+  "video_without_yolo_model": true,
+  "display_metrics": [
+    "표시 15.0 FPS · AI — FPS · 지터 버퍼 131ms",
+    "표시 15.0 FPS · AI — FPS · 지터 버퍼 130ms",
+    "표시 15.0 FPS · AI — FPS · 지터 버퍼 131ms"
+  ],
+  "video_dimensions": [
+    [
+      640,
+      360
+    ],
+    [
+      640,
+      360
+    ],
+    [
+      640,
+      360
+    ]
+  ],
+  "analysis_metrics": [
+    {
+      "camera_id": "CAM-01",
+      "metrics": {
+        "connection_state": "stopped",
+        "last_received": 1794260294.6183617,
+        "capture_fps": 3.75,
+        "decode_ms": 60.23,
+        "reconnect_count": 1
+      }
+    },
+    {
+      "camera_id": "CAM-02",
+      "metrics": {
+        "connection_state": "stopped",
+        "last_received": 1794260294.64944,
+        "capture_fps": 3.54,
+        "decode_ms": 60.08,
+        "reconnect_count": 1
+      }
+    },
+    {
+      "camera_id": "CAM-03",
+      "metrics": {
+        "connection_state": "stopped",
+        "last_received": 1794260294.6805568,
+        "capture_fps": 3.37,
+        "decode_ms": 59.06,
+        "reconnect_count": 1
+      }
+    }
+  ],
+  "pause_and_fullscreen": true,
+  "publisher_restart_isolated": true,
+  "invalid_publish_rejected": true,
+  "valid_credentials_wrong_path_rejected": true,
+  "anonymous_gateway_and_direct_view_rejected": true,
+  "video_continues_when_ai_stopped": true,
+  "javascript_errors": [],
+  "logout_revokes_active_media": true,
+  "success": true,
+  "limitations": [
+    "Synthetic FFmpeg sources; no trained YOLO or Larix hardware",
+    "Local CA TLS; no public DNS certificate or AWS test",
+    "Docker unavailable"
+  ]
+}

@@ -1,13 +1,123 @@
 {
   "native_not_docker": true,
   "synthetic_not_phone": true,
-  "stage": "tls_ready",
+  "synthetic_detector": true,
+  "stage": "complete",
   "tls_probe_version": "TLSv1.3",
   "rtmps_certificate_verified": true,
-  "success": false,
-  "failure_type": "TimeoutError",
+  "three_webrtc_playback": true,
+  "three_webrtc_and_exact_rtp_overlay": true,
+  "display_metrics": [
+    "표시 15.0 FPS · AI 4.72 FPS · 지터 버퍼 131ms",
+    "표시 11.6 FPS · AI 4.79 FPS · 지터 버퍼 131ms",
+    "표시 15.0 FPS · AI 4.66 FPS · 지터 버퍼 131ms"
+  ],
+  "video_dimensions": [
+    [
+      640,
+      360
+    ],
+    [
+      640,
+      360
+    ],
+    [
+      640,
+      360
+    ]
+  ],
+  "analysis_metrics": [
+    {
+      "camera_id": "CAM-01",
+      "metrics": {
+        "inference_wait_ms": 0,
+        "inference_ms": 0.08,
+        "jpeg_ms": 0.53,
+        "jpeg_bytes": 18075,
+        "processing_ms": 31.03,
+        "frame_age_ms": 73.97,
+        "analysis_fps": 4.74,
+        "recording_write_ms": 14.15,
+        "connection_state": "running",
+        "last_received": 1794260165.83641,
+        "capture_fps": 14.69,
+        "decode_ms": 73.51,
+        "reconnect_count": 0
+      }
+    },
+    {
+      "camera_id": "CAM-02",
+      "metrics": {
+        "inference_wait_ms": 0,
+        "inference_ms": 0.34,
+        "jpeg_ms": 0.5,
+        "jpeg_bytes": 18129,
+        "processing_ms": 43.63,
+        "frame_age_ms": 103.42,
+        "analysis_fps": 4.8,
+        "recording_write_ms": 16.43,
+        "connection_state": "running",
+        "last_received": 1794260165.8209186,
+        "capture_fps": 14.7,
+        "decode_ms": 75.48,
+        "reconnect_count": 0
+      }
+    },
+    {
+      "camera_id": "CAM-03",
+      "metrics": {
+        "inference_wait_ms": 0,
+        "inference_ms": 0.09,
+        "jpeg_ms": 0.55,
+        "jpeg_bytes": 18213,
+        "processing_ms": 29.07,
+        "frame_age_ms": 56.74,
+        "analysis_fps": 4.68,
+        "recording_write_ms": 18.63,
+        "connection_state": "running",
+        "last_received": 1794260165.8363488,
+        "capture_fps": 14.69,
+        "decode_ms": 73.29,
+        "reconnect_count": 0
+      }
+    }
+  ],
+  "pause_and_fullscreen": true,
+  "transport_comparison": {
+    "seconds": 5.001,
+    "binary_cam01": {
+      "fps": 4.799040191961607,
+      "bytes_per_second": 91351.52969406119
+    },
+    "webrtc": [
+      {
+        "fps": 14.997000599880023,
+        "bytes_per_second": 157087.5824835033,
+        "jitter_buffer_ms": 131.2134375
+      },
+      {
+        "fps": 14.997000599880023,
+        "bytes_per_second": 157087.5824835033,
+        "jitter_buffer_ms": 130.73457421874997
+      },
+      {
+        "fps": 14.997000599880023,
+        "bytes_per_second": 156538.6922615477,
+        "jitter_buffer_ms": 131.36356640625
+      }
+    ]
+  },
+  "event_and_recording_saved": true,
+  "publisher_restart_isolated": true,
+  "invalid_publish_rejected": true,
+  "valid_credentials_wrong_path_rejected": true,
+  "anonymous_gateway_and_direct_view_rejected": true,
+  "video_continues_when_ai_stopped": true,
+  "javascript_errors": [],
+  "logout_revokes_active_media": true,
+  "success": true,
   "limitations": [
-    "Synthetic FFmpeg sources and detector fixture; no trained YOLO or Larix hardware",
+    "Synthetic FFmpeg sources; no trained YOLO or Larix hardware",
     "Local CA TLS; no public DNS certificate or AWS test",
     "Docker unavailable"
   ]
