@@ -3,12 +3,16 @@ import MonitorPlayer, {stateLabel} from './MonitorPlayer';
 import {cameras} from './data';
 import {accountRequest} from './api';
 
-function CameraTile({camera, status, connection, jump, onFrame}) {
+function CameraTile({camera, status, connection, jump, onFrame, onStatus}) {
   const shell = useRef(null);
+  const videoInput = useRef(null);
   const [busy,setBusy] = useState(false);
+  const [progress,setProgress] = useState(null);
   const [message,setMessage] = useState('');
   const [expanded,setExpanded] = useState(false);
   const [fullscreen,setFullscreen] = useState(false);
+  const testCamera = camera.id === 'CAM-04';
+  const recording = ['running','starting','reconnecting','stopping'].includes(status?.state);
   useEffect(() => {
     const sync = () => setFullscreen(document.fullscreenElement === shell.current);
     document.addEventListener('fullscreenchange',sync);
@@ -17,9 +21,33 @@ function CameraTile({camera, status, connection, jump, onFrame}) {
   useEffect(() => { if (jump) shell.current?.scrollIntoView({behavior:'smooth',block:'center'}); },[jump]);
   async function control(action) {
     setBusy(true);
-    try { await accountRequest(`/api/monitor/${action}?camera_id=${camera.id}`,{method:'POST'}); setMessage(''); }
+    try { onStatus(await accountRequest(`/api/monitor/${action}?camera_id=${camera.id}`,{method:'POST'})); setMessage(''); }
     catch (e) { setMessage(e.message); }
     finally { setBusy(false); }
+  }
+  async function upload(file) {
+    if (!file) return;
+    if (!file.size || file.size > 300 * 1024 * 1024) {
+      setMessage('300 MiB 이하의 영상 파일을 선택하세요.');
+      return;
+    }
+    setProgress(0);
+    setMessage('');
+    try {
+      const uploadId = crypto.randomUUID();
+      const chunkSize = 512 * 1024;
+      for (let offset = 0; offset < file.size; offset += chunkSize) {
+        const query = new URLSearchParams({upload_id:uploadId, offset, total:file.size});
+        const result = await accountRequest(`/api/cameras/CAM-04/upload?${query}`, {
+          method:'POST', headers:{'Content-Type':'application/octet-stream'},
+          body:file.slice(offset, offset + chunkSize),
+        });
+        setProgress(Math.floor(result.received / file.size * 100));
+      }
+      onStatus(await accountRequest('/api/status?camera_id=CAM-04'));
+      setMessage('업로드 완료 · 감지·녹화 시작을 누르세요.');
+    } catch (e) { setMessage(e.message); }
+    finally { setProgress(null); }
   }
   async function toggleFullscreen() {
     try {
@@ -28,7 +56,7 @@ function CameraTile({camera, status, connection, jump, onFrame}) {
     } catch { setMessage('전체화면을 열 수 없습니다.'); }
   }
   return <section className={`panel camera-tile ${expanded ? 'tile-expanded' : ''}`} data-camera-id={camera.id}>
-    <div className="section-title"><h2>{camera.id}{status?.camera_name && status.camera_name !== camera.id ? ` · ${status.camera_name}` : ''}</h2>
+    <div className="section-title"><h2>{camera.id}{testCamera ? ' · 테스트 영상' : status?.camera_name && status.camera_name !== camera.id ? ` · ${status.camera_name}` : ''}</h2>
       <span className={status?.state === 'running' ? 'signal-good' : 'signal-caution'}>{connection === 'ready' ? stateLabel[status?.state] : '서버 연결 중'}</span></div>
     <div className="player-shell" ref={shell}>
       <MonitorPlayer cameraId={camera.id} status={status} connection={connection} enabled={Boolean(status?.configured)}
@@ -36,8 +64,18 @@ function CameraTile({camera, status, connection, jump, onFrame}) {
         onFullscreen={toggleFullscreen} isFullscreen={fullscreen}/>
     </div>
     <div className="feed-footer">
-      <button className="primary" disabled={busy || !status?.configured || ['running','starting','reconnecting','stopping'].includes(status?.state)} onClick={()=>control('start')}>감지·녹화 시작</button>
+      <button className="primary" disabled={busy || progress !== null || !status?.configured || recording} onClick={()=>control('start')}>감지·녹화 시작</button>
       <button className="danger-button" disabled={busy || !['running','starting','reconnecting','disconnected'].includes(status?.state)} onClick={()=>control('stop')}>중단</button>
+      {testCamera && <>
+        <input ref={videoInput} type="file" accept="video/*,.mkv,.avi" hidden onChange={event=>{
+          const file = event.currentTarget.files?.[0];
+          event.currentTarget.value = '';
+          upload(file);
+        }}/>
+        <button type="button" disabled={busy || recording || progress !== null} onClick={()=>videoInput.current?.click()}>
+          {progress === null ? '영상 업로드' : `업로드 ${progress}%`}
+        </button>
+      </>}
     </div>
     <p className="small-note">입력 {status?.metrics?.capture_fps ?? '—'} FPS · 분석 {status?.metrics?.analysis_fps ?? '—'} FPS · 처리 지연 {status?.metrics?.frame_age_ms ?? '—'} ms</p>
     {status?.relay && <p className="small-note">영상 {status.relay.online ? '연결됨' : '연결 안 됨'} · 최근 수신 {status.relay.last_received ? new Date(status.relay.last_received*1000).toLocaleTimeString('ko-KR') : '대기'} · AI {stateLabel[status?.state] ?? status?.state}</p>}
@@ -48,6 +86,7 @@ function CameraTile({camera, status, connection, jump, onFrame}) {
 }
 
 export default function MultiCameraMonitor({jump, onTotals}) {
+  const cameraStrip = useRef(null);
   const [statuses,setStatuses] = useState({});
   const [connection,setConnection] = useState('loading');
   const [message,setMessage] = useState('');
@@ -86,7 +125,11 @@ export default function MultiCameraMonitor({jump, onTotals}) {
   function receiveFrame(id,frame) {frames.current[id]=frame;publishTotals();}
   async function controlAll(action) {
     setBusy(true);
-    try {await accountRequest(`/api/monitor/${action}?camera_id=all`,{method:'POST'});setMessage('');}
+    try {
+      const result = await accountRequest(`/api/monitor/${action}?camera_id=all`,{method:'POST'});
+      setStatuses(Object.fromEntries(result.cameras.map(status=>[status.camera_id,status])));
+      setMessage('');
+    }
     catch(e) {setMessage(e.message);} finally {setBusy(false);}
   }
   async function correct(event,tracklet) {
@@ -101,11 +144,16 @@ export default function MultiCameraMonitor({jump, onTotals}) {
   return <>
     <div className="multi-controls"><button className="primary" disabled={busy} onClick={()=>controlAll('start')}>전체 감지·녹화 시작</button>
       <button className="danger-button" disabled={busy} onClick={()=>controlAll('stop')}>전체 중단</button>
-      <span>ReID {reid === 'ready' ? '모델 활성' : reid === 'disabled' ? '모델 미설정 · 카메라 간 자동 연결 비활성' : reid}</span></div>
+      <span>ReID {reid === 'ready' ? '모델 활성' : reid === 'disabled' ? '모델 미설정 · 카메라 간 자동 연결 비활성' : reid}</span>
+      <div className="camera-scroll-controls">
+        <button type="button" onClick={()=>cameraStrip.current?.scrollBy({left:-cameraStrip.current.clientWidth,behavior:'smooth'})}>← 이전 카메라</button>
+        <button type="button" onClick={()=>cameraStrip.current?.scrollBy({left:cameraStrip.current.clientWidth,behavior:'smooth'})}>다음 카메라 →</button>
+      </div></div>
     {service && <p className="small-note">서버 CPU {service.cpu_percent.toFixed(1)}% · 메모리 {(service.rss_bytes/1024**2).toFixed(0)} MiB · 디스크 여유 {(service.disk_free_bytes/1024**3).toFixed(1)} GiB</p>}
     {message && <p role="status">{message}</p>}
-    <div className="multi-camera-grid">{cameras.map(camera => <CameraTile key={camera.id} camera={camera}
+    <div className="multi-camera-grid" ref={cameraStrip} aria-label="카메라 가로 목록" tabIndex={0}>{cameras.map(camera => <CameraTile key={camera.id} camera={camera}
       status={statuses[camera.id]} connection={connection} onFrame={receiveFrame}
+      onStatus={status=>setStatuses(previous=>({...previous,[status.camera_id]:status}))}
       jump={jump?.cameraId === camera.id ? jump : null}/>)}</div>
     <section className="panel tracking-panel"><h2>익명 작업자 이동 기록</h2><p>Global ID는 추정 연결입니다. 미확정 기록은 동일인으로 확인되지 않았습니다.</p>
       {tracklets.length === 0 ? <p>아직 추적 기록이 없습니다.</p> : <div className="tracking-list">{tracklets.map(t=><details key={t.id}>

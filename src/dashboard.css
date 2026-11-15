@@ -65,18 +65,19 @@
 .logout-confirm:hover{background:#e04754}.logout-cancel:hover{background:#344962}
 .logout-dialog-actions button:disabled{opacity:.6;cursor:wait}
 
-.cctv .multi-camera-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin:16px 0}
-.cctv .camera-tile{min-width:0;align-self:start}
+.cctv .multi-camera-grid{--camera-width:calc((100% - 24px) / 3);--camera-span:3;display:grid;grid-auto-flow:column;grid-auto-columns:var(--camera-width);gap:12px;margin:16px 0;overflow-x:auto;scroll-snap-type:x proximity;padding-bottom:8px}
+.cctv .camera-tile{min-width:0;align-self:start;scroll-snap-align:start}
 .cctv .camera-tile .section-title{display:flex;flex-wrap:wrap;gap:8px;padding:12px}
 .cctv .camera-tile .section-title>span{font-size:11px}
-.cctv .camera-tile .feed-footer{display:flex;gap:8px;padding:10px}
+.cctv .camera-tile .feed-footer{display:flex;flex-wrap:wrap;gap:8px;padding:10px}
 .cctv .camera-tile .video-labels{font-size:9px;inset:6px 6px auto;gap:3px}
 .cctv .camera-tile .video-labels>span{padding:3px}
 .cctv .camera-tile .person-count-label{top:auto;bottom:34px;left:6px;font-size:10px}
 .cctv .camera-tile .timeline>div{flex-wrap:wrap}
 .cctv .camera-tile .playback-toolbar{padding:8px;gap:4px}
 .cctv .camera-tile .playback-toolbar button{font-size:10px;padding:6px}
-.cctv .camera-tile.tile-expanded{grid-column:1/-1}
+.cctv .camera-tile.tile-expanded{grid-column:span var(--camera-span)}
+.cctv .camera-scroll-controls{display:flex;gap:6px;margin-left:auto}
 .cctv .multi-controls{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 .cctv .multi-controls>span{font-size:12px;color:var(--muted)}
 .cctv .display-metrics{position:absolute;top:48px;right:6px;font-size:9px;background:#0b1223dc;padding:3px;color:#bed2ed}
@@ -95,5 +96,5 @@
 .cctv .tracking-list form{display:flex;flex-wrap:wrap;gap:12px;align-items:end}
 .cctv .tracking-list label{display:grid;gap:5px}
 .cctv .local-preview video{max-height:50vh}
-@media(max-width:1050px){.cctv .multi-camera-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
-@media(max-width:700px){.cctv .multi-camera-grid{grid-template-columns:1fr}}
+@media(max-width:1050px){.cctv .multi-camera-grid{--camera-width:calc((100% - 12px) / 2);--camera-span:2}}
+@media(max-width:700px){.cctv .multi-camera-grid{--camera-width:100%;--camera-span:1}}

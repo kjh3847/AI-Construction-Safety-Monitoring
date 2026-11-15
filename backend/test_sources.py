@@ -1,9 +1,13 @@
-"""Three independent camera stores, events, and controls; no hardware required."""
+"""Independent camera stores, events, and controls; no hardware required."""
 from pathlib import Path
 import tempfile
 import time
 import unittest
+from uuid import uuid4
 from unittest.mock import patch
+
+import cv2
+import numpy as np
 
 import database
 from video_test_support import video_client
@@ -38,9 +42,47 @@ class SourceTest(unittest.TestCase):
                     client.post('/api/monitor/start?camera_id=all')
                     for call in (first,second,third): call.assert_called_once()
                 client.patch('/api/settings',json={'retention_seconds':120})
-                self.assertEqual([source.store.retention for source in main.monitors().values()],[120]*3)
+                self.assertEqual([source.store.retention for source in main.monitors().values()],[120]*4)
                 self.assertEqual(client.get('/api/status?camera_id=unknown').status_code,404)
                 renamed=database.save_event('old display name','NO-Hardhat',camera_id='CAM-03')
                 self.assertEqual(client.get(f'/api/events/{renamed}').json()['camera_id'],'CAM-03')
                 filtered=client.get('/api/events?camera_id=CAM-03').json()['events']
                 self.assertIn(renamed,[row['id'] for row in filtered])
+
+    def test_uploaded_video_runs_once_and_records_cam4_event(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = root / 'fixture.avi'
+            writer = cv2.VideoWriter(str(path), cv2.VideoWriter_fourcc(*'MJPG'), 8, (160, 120))
+            self.assertTrue(writer.isOpened())
+            try:
+                for _ in range(8):
+                    writer.write(np.zeros((120, 160, 3), dtype=np.uint8))
+            finally:
+                writer.release()
+            payload = path.read_bytes()
+            headers = {'content-type':'application/octet-stream'}
+            detections = [
+                {'class_name':'Person', 'bbox':[10, 4, 140, 116], 'confidence':.9},
+                {'class_name':'NO-Hardhat', 'bbox':[35, 6, 65, 28], 'confidence':.8},
+            ]
+            with patch.object(database, 'DB_PATH', root/'test.db'), video_client(root/'recordings') as (main, client):
+                route = '/api/cameras/CAM-04/upload'
+                upload = str(uuid4())
+                params = {'upload_id':upload, 'offset':0, 'total':len(payload)}
+                self.assertEqual(client.get('/api/status?camera_id=CAM-04').json()['state'], 'unconfigured')
+                first = client.post(route, params=params, headers=headers, content=payload[:100])
+                self.assertEqual(first.json(), {'ready':False, 'received':100})
+                params['offset'] = 100
+                final = client.post(route, params=params, headers=headers, content=payload[100:])
+                self.assertEqual(final.json(), {'ready':True, 'received':len(payload)})
+                with patch.object(main.engine, 'predict', return_value=(None, 0, 0)), \
+                        patch('monitor.LocalBoTSORT.detections', return_value=detections):
+                    response = client.post('/api/monitor/start?camera_id=CAM-04')
+                    self.assertEqual(response.status_code, 200)
+                    main.monitor4.thread.join(timeout=5)
+                self.assertFalse(main.monitor4.thread.is_alive())
+                self.assertEqual(client.get('/api/status?camera_id=CAM-04').json()['state'], 'finished')
+                events = client.get('/api/events?camera_id=CAM-04').json()['events']
+                self.assertEqual([event['event_type'] for event in events], ['NO-Hardhat'])
+                self.assertTrue(events[0]['playable'])

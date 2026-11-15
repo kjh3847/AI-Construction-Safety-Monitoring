@@ -31,6 +31,15 @@ export default function MonitorPlayer({ cameraId, status, connection, enabled, o
   // WebRTC stream is available while the AI is starting or stopped.
   const webRTC = status?.live_transport === 'webrtc' && mode === 'live'
     && status?.state !== 'running';
+  const activeTestRecording = cameraId === 'CAM-04' && ['starting', 'running'].includes(status?.state)
+    ? status?.recording_id : null;
+
+  useEffect(() => {
+    if (!activeTestRecording) return;
+    target.current = null;
+    setMode('live');
+    setPaused(false);
+  }, [activeTestRecording]);
 
   useLayoutEffect(() => {
     if (!frame?.decoded || !canvas.current) return;

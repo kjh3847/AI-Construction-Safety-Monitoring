@@ -1,4 +1,5 @@
 from pathlib import Path
+from uuid import UUID
 import os
 import json
 import asyncio
@@ -25,6 +26,7 @@ from database import (init_db, get_events, event_summary, review_event, get_even
                       today_event_count, retention_seconds)
 from monitor import Monitor, frame_payload
 from media_gateway import MediaGateway
+from video_upload import TestVideoUpload, CHUNK_BYTES, MAX_VIDEO_BYTES
 
 LOCAL_DEMO = os.getenv('LOCAL_DEMO_ENABLED','').lower() == 'true'
 if LOCAL_DEMO:
@@ -43,7 +45,7 @@ async def lifespan(app):
         await run_in_threadpool(global_tracker.encoder.encode,None,[])
     for source in monitors().values():
         source.initialize(retention_seconds())
-        if os.getenv('MONITOR_AUTOSTART', 'false').lower() == 'true' and source.source is not None:
+        if os.getenv('MONITOR_AUTOSTART', 'false').lower() == 'true' and source.source is not None and source.upload_path is None:
             source.start()
     try:
         yield
@@ -102,11 +104,14 @@ def make_monitor(config, root):
 monitor = make_monitor(configs[0], recording_root)
 monitor2 = make_monitor(configs[1], recording_root / 'CAM-02')
 monitor3 = make_monitor(configs[2], recording_root / 'CAM-03')
+monitor4 = Monitor(model, MODEL_PATH, None, recording_root / 'CAM-04', camera_name='CAM-04',
+                   camera_id='CAM-04', use_camera_env=False, engine=engine,
+                   upload_path=recording_root / 'CAM-04' / 'test-video.mp4')
+test_video_upload = TestVideoUpload(monitor4)
 
 
-# 👇 생성된 3개의 카메라를 시스템 목록에 등록합니다.
 def monitors():
-    return {'CAM-01': monitor, 'CAM-02': monitor2, 'CAM-03': monitor3}
+    return {'CAM-01': monitor, 'CAM-02': monitor2, 'CAM-03': monitor3, 'CAM-04': monitor4}
 
 
 def select_monitor(camera_id):
@@ -184,12 +189,27 @@ def status(camera_id: str = 'CAM-01'):
 @app.get('/api/cameras', dependencies=[Depends(monitor_user)])
 def cameras_status():
     return {'cameras': [{**status(key),
-                         'duplicate_source':configs[index]['duplicate_source']}
-                        for index,(key,source) in enumerate(monitors().items())],
+                         'duplicate_source': index < len(configs) and configs[index]['duplicate_source']}
+                        for index,key in enumerate(monitors())],
             'reid_state':global_tracker.encoder.state,
             'service_metrics':{'cpu_percent':process_metrics.cpu_percent(),
                 'rss_bytes':process_metrics.memory_info().rss,
                 'disk_free_bytes':psutil.disk_usage(str(recording_root)).free}}
+
+
+@app.post('/api/cameras/CAM-04/upload')
+async def upload_test_video(request: Request, upload_id: UUID, offset: int = Query(ge=0),
+                            total: int = Query(gt=0, le=MAX_VIDEO_BYTES), user=Depends(monitor_user)):
+    if request.headers.get('content-type') != 'application/octet-stream':
+        raise HTTPException(415, '영상 업로드 형식이 올바르지 않습니다.')
+    if monitor4.status()['state'] in ('starting', 'running', 'stopping'):
+        raise HTTPException(409, 'CAM 4 감지 녹화를 종료한 후 업로드하세요.')
+    data = bytearray()
+    async for chunk in request.stream():
+        if len(data) + len(chunk) > CHUNK_BYTES:
+            raise HTTPException(413, '영상 조각이 너무 큽니다.')
+        data.extend(chunk)
+    return await run_in_threadpool(test_video_upload.append, user['employee_id'], upload_id, offset, total, data)
 
 
 @app.get('/health')

@@ -317,7 +317,7 @@ function App({onLogout, user}) {
           </span>
 
           <div className="header-right">
-            <span className="demo-dot">{connection !== 'ready' ? connectionText : `3대 동시 관제 · 실시간 수신 ${totals.active}/3대`}</span>
+        <span className="demo-dot">{connection !== 'ready' ? connectionText : `감지 중 ${totals.active}/${cameras.length}채널`}</span>
 
             <button
               className="icon-btn"
@@ -391,7 +391,7 @@ function App({onLogout, user}) {
             <>
               {page === 'monitor' && <>
                 <div className="stats">
-                  <Stat label="현재 감지 인원 합계" value={totals.active ? totals.people : '—'} unit="명" detail={`실시간 수신 ${totals.active}/3대 · 카메라별 검출 합계`} icon={<Camera/>}/>
+            <Stat label="현재 감지 인원 합계" value={totals.active ? totals.people : '—'} unit="명" detail={`감지 중 ${totals.active}/${cameras.length}채널 · 테스트 영상 포함`} icon={<Camera/>}/>
                   <Stat label="현재 미착용 추정 인원 합계" value={totals.active ? totals.violations : '—'} unit="명" detail="각 카메라의 명시적 미착용 증거 기준" warning icon={<ShieldCheck/>}/>
                   <Stat label="오늘 누적 이벤트" value={summary?.today ?? '—'} unit="건" detail="전체 카메라 · 한국 시간 기준" warning icon={<Bell/>}/>
                 </div>

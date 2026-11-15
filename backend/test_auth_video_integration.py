@@ -75,7 +75,7 @@ class AuthVideoIntegrationTests(unittest.TestCase):
                         self.assertEqual(response.status_code, 200)
                         self.assertIn('HttpOnly', response.headers['set-cookie'])
                         client.cookies.update(accounts.cookies)
-                        self.assertEqual(set(video.monitors()), {'CAM-01', 'CAM-02', 'CAM-03'})
+                        self.assertEqual(set(video.monitors()), {'CAM-01', 'CAM-02', 'CAM-03', 'CAM-04'})
                         for number, (camera_id, source) in enumerate(video.monitors().items(), 1):
                             recording = str(number)*32
                             source.store.add(dict(recording_id=recording, frame_id=0,
@@ -87,7 +87,7 @@ class AuthVideoIntegrationTests(unittest.TestCase):
                             self.assertEqual(frame.status_code, 200)
                             self.assertEqual(frame.json()['camera_name'], camera_id)
                             self.assertTrue(client.get(f'/api/events/{event_id}').json()['playable'])
-                        self.assertEqual(len(client.get('/api/events').json()['events']), 3)
+                        self.assertEqual(len(client.get('/api/events').json()['events']), 4)
                         for app in (accounts, client):
                             self.assertEqual(app.get('/api/admin/accounts').status_code, 403)
                             self.assertEqual(app.post('/api/admin/accounts', json={

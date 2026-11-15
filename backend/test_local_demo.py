@@ -81,7 +81,7 @@ class LocalDemoTests(unittest.TestCase):
                     self.assertEqual(client.get('/api/cameras').status_code,401)
                     client.post('/api/auth/local-demo')
                     cameras=client.get('/api/cameras').json()['cameras']
-                    self.assertEqual(len(cameras),3)
+                    self.assertEqual(len(cameras),4)
                     self.assertTrue(all(c['state']=='unconfigured' for c in cameras))
                     self.assertEqual(client.post('/api/monitor/start?camera_id=all').status_code,200)
                     self.assertEqual(client.get('/api/events').json()['events'],[])

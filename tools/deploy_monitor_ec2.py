@@ -51,6 +51,7 @@ def verify_web():
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--configure-rds", action="store_true")
+    parser.add_argument("--build-monitor", action="store_true", help="Rebuild the FastAPI worker as well as the web image.")
     options = parser.parse_args()
 
     previous_connection = RDS_ENV.read_bytes() if RDS_ENV.exists() else None
@@ -71,8 +72,12 @@ def main():
     monitor = run([*COMPOSE, "ps", "-q", "monitor"], capture_output=True).stdout.strip()
     if not monitor:
         raise SystemExit("No running safety-stream monitor container.")
-    previous_web = run([*DOCKER, "inspect", "--format", "{{.Image}}",
-                        "safety-stream-web-1"], capture_output=True).stdout.strip()
+    build_targets = ("monitor", "web") if options.build_monitor else ("web",)
+    previous_images = {
+        service: run([*DOCKER, "inspect", "--format", "{{.Image}}",
+                      f"safety-stream-{service}-1"], capture_output=True).stdout.strip()
+        for service in build_targets
+    }
     check_code = (
         "import sys, psycopg\n"
         "try:\n"
@@ -88,7 +93,7 @@ def main():
     try:
         write_connection(connection)
         run([*RDS_COMPOSE, "config", "--quiet"])
-        run([*RDS_COMPOSE, "build", "web"])
+        run([*RDS_COMPOSE, "build", *build_targets])
         started_rollout = True
         restart(RDS_COMPOSE)
         verify_web()
@@ -98,8 +103,9 @@ def main():
         else:
             write_connection(previous_connection)
         if started_rollout:
-            print("Deployment failed. Restoring the previous web image and DB connection.", flush=True)
-            run([*DOCKER, "image", "tag", previous_web, "safety-stream-web"])
+            print("Deployment failed. Restoring the previous images and DB connection.", flush=True)
+            for service, image in previous_images.items():
+                run([*DOCKER, "image", "tag", image, f"safety-stream-{service}"])
             restart(RDS_COMPOSE if previous_connection is not None else COMPOSE)
         raise
     print("DEPLOY_OK")

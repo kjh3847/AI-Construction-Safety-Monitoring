@@ -26,13 +26,15 @@ from frame_store import FrameStore
 
 class Monitor:
     def __init__(self, model, model_path, video_path, root, camera_name=None, use_camera_env=True,
-                 engine=None, global_tracker=None, camera_id=None, adapter='direct'):
+                 engine=None, global_tracker=None, camera_id=None, adapter='direct', upload_path=None):
         self.model = model
         self.adapter = adapter
         self.model_path = Path(model_path)
         source = os.getenv('CAMERA_SOURCE', '').strip() if use_camera_env else ''
-        self.source, self.source_type = classify_source(source or video_path)
-        self.source_kind = 'test' if self.source_type == 'file' else 'camera'
+        self.upload_path = Path(upload_path) if upload_path is not None else None
+        existing_upload = self.upload_path if self.upload_path and self.upload_path.is_file() else None
+        self.source, self.source_type = classify_source(existing_upload or source or video_path)
+        self.source_kind = 'test' if self.source_type == 'file' or self.upload_path else 'camera'
         self.video_path = Path(self.source) if self.source_type == 'file' else None
         self.camera_name = camera_name or os.getenv('CAMERA_NAME', 'CAM-01')
         self.camera_id = camera_id or self.camera_name
@@ -59,6 +61,20 @@ class Monitor:
         self.storage_error = None
         self.writer_queue = Queue(maxsize=32)
         self.writer = None
+
+    def install_upload(self, staged):
+        with self.lock:
+            if self.thread and self.thread.is_alive():
+                return False
+            staged.replace(self.upload_path)
+            self.source = str(self.upload_path)
+            self.video_path = self.upload_path
+            self.source_type = 'file'
+            self.source_name = self.upload_path.name
+            self.state, self.error = 'idle', None
+            self.latest, self.recording_id, self.updated_at = None, None, None
+            self.metrics = {}
+            return True
 
     def initialize(self, retention):
         self.store.retention = retention
@@ -98,6 +114,8 @@ class Monitor:
             self.stop_event.clear()
             self.state, self.error, self.updated_at = 'starting', None, None
             self.recording_id = uuid.uuid4().hex
+            if self.upload_path:
+                self.latest = None
             self.thread = Thread(target=self._run, daemon=True)
             self.thread.start()
 
@@ -160,6 +178,7 @@ class Monitor:
     def _run(self):
         cap = None
         live_reader = None
+        finished_upload = False
         try:
             if self.source is None:
                 self.state, self.error = 'idle', '카메라 입력이 설정되지 않았습니다.'
@@ -178,20 +197,22 @@ class Monitor:
             fps = cap.get(cv2.CAP_PROP_FPS) if cap else 25
             fps = fps if 0 < fps <= 240 else 25
             digest = hashlib.sha256()
-            for path in (self.video_path, self.model_path) if self.source_kind == 'test' else ():
+            legacy_file = self.source_kind == 'test' and self.upload_path is None
+            for path in (self.video_path, self.model_path) if legacy_file else ():
                 with path.open('rb') as stream:
                     for chunk in iter(lambda: stream.read(1024 * 1024), b''):
                         digest.update(chunk)
-            source_id = digest.hexdigest() if self.source_kind == 'test' else self.recording_id
+            source_id = digest.hexdigest() if legacy_file else self.recording_id
             recorder = EventRecorder(source_id, self.model_path.name, self.source_name,
                                      camera_name=self.camera_name,camera_id=self.camera_id)
-            frame_id, last_saved, last_generation = 0, 0, None
+            frame_id, analyzed, last_saved, last_generation = 0, 0, 0, None
             origin = time.monotonic()
             local_tracker = LocalBoTSORT()
             self.writer = Thread(target=self._write_loop, daemon=True, name=f'{self.camera_id}-recording')
             self.writer.start()
             analysis_interval = 1/max(.1,float(os.getenv('ANALYSIS_FPS', '5')))
             recording_interval = 1/max(.1,float(os.getenv('RECORDING_FPS', '2')))
+            file_stride = max(1, round(fps * analysis_interval)) if self.upload_path else 1
             while not self.stop_event.is_set():
                 started = time.monotonic()
                 if live_reader is not None:
@@ -200,6 +221,9 @@ class Monitor:
                     success, frame = cap.read()
                     captured = time.time()
                 if not success:
+                    if self.upload_path:
+                        finished_upload = True
+                        break
                     with self.lock:
                         self.state = 'finished' if self.source_kind == 'test' else live_reader.connection_state
                         self.error = None if self.source_kind == 'test' else '카메라 영상 수신이 끊겼습니다.'
@@ -275,15 +299,21 @@ class Monitor:
                         self.metrics['recording_dropped'] = self.metrics.get('recording_dropped',0)+1
                     last_saved = captured
                 elapsed = time.monotonic()-started
+                analyzed += 1
                 self.metrics.update(inference_wait_ms=round(wait_ms,2), inference_ms=round(inference_ms,2),
                     jpeg_ms=round((time.perf_counter()-encode_started)*1000,2), jpeg_bytes=len(jpeg),
                     processing_ms=round(elapsed*1000,2), frame_age_ms=round((time.time()-captured)*1000,2),
-                    analysis_fps=round((frame_id+1)/max(.001,time.monotonic()-origin),2))
+                    analysis_fps=round(analyzed/max(.001,time.monotonic()-origin),2))
                 with self.lock:
                     self.state, self.updated_at, self.error = 'running', captured, None
                 frame_id += 1
                 if self.source_kind == 'test':
-                    self.stop_event.wait(max(0, 1 / fps - (time.monotonic() - started)))
+                    for _ in range(file_stride - 1):
+                        if self.stop_event.is_set() or not cap.grab():
+                            break
+                        frame_id += 1
+                    self.stop_event.wait(max(0, frame_id / fps - (time.monotonic() - origin))
+                                         if self.upload_path else max(0, 1 / fps - (time.monotonic() - started)))
                 else:
                     self.stop_event.wait(max(0,analysis_interval-elapsed))
         except Exception as exc:
@@ -308,6 +338,8 @@ class Monitor:
             with self.lock:
                 if self.stop_event.is_set():
                     self.state = 'stopped'
+                elif finished_upload:
+                    self.state, self.error = 'finished', None
 
 
 def frame_payload(frame):
