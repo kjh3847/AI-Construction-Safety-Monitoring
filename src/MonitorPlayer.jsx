@@ -2,7 +2,7 @@ import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Play, Pause, SkipBack, SkipForward, Radio, Maximize, PanelRightClose, PanelRightOpen } from 'lucide-react';
 
 import {API_BASE} from './api';
-import {unpackFrame, textLabels} from './frameProtocol';
+import {unpackFrame, drawEquipmentBoxes, textLabels} from './frameProtocol';
 import WebRTCLive from './WebRTCLive';
 const BASE = API_BASE;
 const timeLabel = (timestamp) => timestamp == null ? '—' : new Date(timestamp * 1000).toLocaleString('ko-KR');
@@ -27,7 +27,10 @@ export default function MonitorPlayer({ cameraId, status, connection, enabled, o
   callback.current = onFrame;
   const bounds = status?.buffer;
   const available = bounds?.start != null;
-  const webRTC = status?.live_transport === 'webrtc' && mode === 'live';
+  // During analysis, use the frame sent with its own detections. A separate
+  // WebRTC stream is available while the AI is starting or stopped.
+  const webRTC = status?.live_transport === 'webrtc' && mode === 'live'
+    && status?.state !== 'running';
 
   useLayoutEffect(() => {
     if (!frame?.decoded || !canvas.current) return;
@@ -36,6 +39,7 @@ export default function MonitorPlayer({ cameraId, status, connection, enabled, o
     canvas.current.height = image.naturalHeight;
     const context = canvas.current.getContext('2d');
     context.drawImage(image, 0, 0);
+    drawEquipmentBoxes(context, frame, image.naturalWidth, image.naturalHeight);
     context.font = `${Math.max(14, Math.round(image.naturalWidth/65))}px "Malgun Gothic", sans-serif`;
     context.lineWidth = 3;
     context.strokeStyle = '#07101e';
@@ -194,9 +198,9 @@ export default function MonitorPlayer({ cameraId, status, connection, enabled, o
   const label = paused ? '일시정지 · 과거 화면' : mode === 'past' ? '과거 재생' : webRTC ? (status?.relay?.online?'LIVE · WebRTC':'송출 대기') : fresh ? (status?.source_kind === 'test' ? '테스트 영상 · 현재' : 'LIVE · 실시간') : stateLabel[status?.state] ?? '연결 중';
   return <>
     <div className="dvr-picture">
-      <canvas ref={canvas} role="img" aria-label="재생 시점의 YOLO 감지 영상" hidden={!frame || webRTC}/>
+      <canvas ref={canvas} role="img" aria-label="재생 시점의 YOLO 감지 영상" hidden={!frame?.decoded || webRTC}/>
       {webRTC && <WebRTCLive cameraId={cameraId} status={status} paused={paused} onFrame={meta=>{setFrame(meta);displayed.current=meta;callback.current(meta);}}/>}
-      {!frame && !webRTC && <div className="empty-feed"><Radio size={36}/><h3>{enabled ? '영상 버퍼 준비' : '카메라 연결 안 됨'}</h3>{!enabled && <p>영상 소스를 설정하면 이 화면에 표시됩니다.</p>}</div>}
+      {!frame?.decoded && !webRTC && <div className="empty-feed"><Radio size={36}/><h3>{enabled ? '영상 버퍼 준비' : '카메라 연결 안 됨'}</h3>{!enabled && <p>영상 소스를 설정하면 이 화면에 표시됩니다.</p>}</div>}
       <div className="video-labels"><span>{frame?.camera_name ?? status?.camera_name ?? 'CAM-01'}</span><span className={fresh && mode === 'live' ? 'signal-good' : 'signal-caution'}>{label}</span><span>{mode === 'past' || paused ? '재생 시점' : '현재'} 감지 {connection === 'ready' && frame && (fresh || mode === 'past' || paused) ? `${frame.person_count}명` : '—'}</span><span>{timeLabel(frame?.timestamp)}</span></div>
       {(connection !== 'ready' || error) && <div className="video-message" role="status">{connection === 'loading' ? '서버 연결 중' : connection === 'error' ? '서버 연결 실패 · 마지막 화면' : error}</div>}
       {frame?.source_kind === 'test' && <span className="source-label">테스트 영상 · {frame.source_name} · 원본 {frame.video_seconds.toFixed(1)}초</span>}

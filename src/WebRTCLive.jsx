@@ -1,7 +1,7 @@
 import React,{useEffect,useRef,useState} from 'react';
 import {API_BASE,accountRequest} from './api';
 import {MetadataBuffer} from './mediaClock';
-import {textLabels} from './frameProtocol';
+import {drawEquipmentBoxes, textLabels} from './frameProtocol';
 
 export default function WebRTCLive({cameraId,status,paused,onFrame}){
   const video=useRef(null),canvas=useRef(null),callback=useRef(onFrame),pauseRef=useRef(paused);
@@ -27,6 +27,7 @@ export default function WebRTCLive({cameraId,status,paused,onFrame}){
         if(meta){
           alignedFrames++;setAligned(true);
           context.save();context.scale(element.videoWidth/meta.width,element.videoHeight/meta.height);
+          drawEquipmentBoxes(context,meta,meta.width,meta.height);
           context.font=`${Math.max(14,Math.round(meta.width/65))}px "Malgun Gothic",sans-serif`;
           context.lineWidth=3;context.strokeStyle='#07101e';
           for(const label of textLabels(meta,meta.width,meta.height,text=>context.measureText(text).width)){

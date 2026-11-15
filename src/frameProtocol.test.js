@@ -1,6 +1,22 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {unpackFrame,textLabels} from './frameProtocol.js';
+import {drawEquipmentBoxes,unpackFrame,textLabels} from './frameProtocol.js';
+
+test('PPE boxes display only class names and clamp boxes to the frame', () => {
+  const boxes = [], labels = [];
+  const context = {
+    save() {}, restore() {}, fillRect() {},
+    measureText: text => ({width: text.length * 8}),
+    strokeRect: (...coordinates) => boxes.push(coordinates),
+    fillText: text => labels.push(text),
+  };
+  const equipment = ['Hardhat', 'NO-Hardhat', 'Safety Vest', 'NO-Safety Vest', 'Person'];
+  drawEquipmentBoxes(context, {detections: equipment.map(class_name => ({
+    class_name, confidence: 0.60, bbox: [-4, 10, 50, 200],
+  }))}, 320, 180);
+  assert.deepEqual(labels, equipment.slice(0, 4));
+  assert.deepEqual(boxes, Array.from({length: 4}, () => [0, 10, 50, 170]));
+});
 
 test('binary packet preserves camera/frame pairing and rejects another camera',()=>{
   const json=new TextEncoder().encode(JSON.stringify({camera_id:'CAM-02',frame_id:17}));
