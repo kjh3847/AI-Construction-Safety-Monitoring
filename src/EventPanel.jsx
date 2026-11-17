@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Bell, Check, Download, ImageOff, X, Play } from 'lucide-react';
+import { Bell, Check, ImageOff, X, Play } from 'lucide-react';
 import { cameras } from './data';
 import {API_BASE} from './api';
 const BASE = API_BASE;
@@ -36,7 +36,7 @@ function Snapshot({event}) {
   useEffect(() => setFailed(false), [event.id, event.snapshot_url]);
   return event.snapshot_url && !failed ? <img src={`${BASE}${event.snapshot_url}`} alt="실제 감지 스냅샷" onError={() => setFailed(true)}/> : <div className="snapshot-empty"><ImageOff size={22}/><span>스냅샷 없음</span></div>;
 }
-export default function EventPanel({events, connection, summary, filter, setFilter, equipment, setEquipment, day, setDay, review, exportCsv, onJump, loadMore, canLoadMore}) {
+export default function EventPanel({events, connection, summary, filter, setFilter, equipment, setEquipment, day, setDay, review, onJump, loadMore, canLoadMore}) {
   const sustainedWarnings = events.filter((event) => event.event_reason === 'sustained' && event.review_status !== 'reviewed');
   const [selected, setSelected] = useState(null);
   const [detail, setDetail] = useState(null);
@@ -89,7 +89,7 @@ export default function EventPanel({events, connection, summary, filter, setFilt
     return () => document.removeEventListener('keydown', handleKey);
   }, [selected]);
   return <section className="panel event-panel">
-    <div className="section-title"><div><h2><Bell size={16}/> 감지 이벤트 <span className="count">{events.length}</span></h2><span className="muted">최신순 · 전체 영상 확인 필요 {connection === 'ready' ? summary?.pending : '—'}건</span></div><button className="outline" onClick={exportCsv}><Download size={15}/>CSV</button></div>
+    <div className="section-title"><div><h2><Bell size={16}/> 감지 이벤트 <span className="count">{events.length}</span></h2><span className="muted">최신순 · 전체 영상 확인 필요 {connection === 'ready' ? summary?.pending : '—'}건</span></div></div>
     <div className="event-filters">
       <label>날짜 (한국 시간)<input aria-label="이벤트 날짜" type="date" value={day} onChange={(e) => setDay(e.target.value)}/></label>
       <label>위반 종류<select value={equipment} onChange={(e) => setEquipment(e.target.value)}><option value="all">전체 종류</option><option value="NO-Hardhat">안전모 미착용 의심</option><option value="NO-Safety Vest">조끼 미착용 의심</option><option value="TEST_NO_HELMET">기존 테스트 기록</option></select></label>

@@ -35,12 +35,10 @@ class PipelineTest(unittest.TestCase):
                {'class_name': 'NO-Hardhat', 'confidence': .85, 'bbox': [30,0,70,40]}]
         good = [{'class_name': 'Hardhat', 'confidence': .95}]
         self.assertEqual(recorder.record(good, 0, 0), [])
-        self.assertEqual(len(recorder.record(bad, 1, .1)), 1)
-        self.assertEqual(recorder.record(bad, 2, .2), [])
-        self.assertEqual(recorder.record(bad, 20, 2.0), [])
-        self.assertEqual(recorder.record(bad, 41, 4.1), [])
         replay = EventRecorder('video-model-hash', 'best.pt', 'test.mp4')
-        self.assertEqual(replay.record(bad, 1, .1), [])
+        for frame in range(1, 9):
+            self.assertEqual(len(recorder.record(bad, frame, frame / 2)), int(frame == 7))
+            self.assertEqual(replay.record(bad, frame, frame / 2), [])
         self.assertEqual(database.event_summary(), {'total': 2, 'pending': 2})
         rows = database.get_events()
         self.assertTrue(any(row['event_type'] == 'LEGACY' for row in rows))

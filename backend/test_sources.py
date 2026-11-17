@@ -56,7 +56,7 @@ class SourceTest(unittest.TestCase):
             writer = cv2.VideoWriter(str(path), cv2.VideoWriter_fourcc(*'MJPG'), 8, (160, 120))
             self.assertTrue(writer.isOpened())
             try:
-                for _ in range(8):
+                for _ in range(32):
                     writer.write(np.zeros((120, 160, 3), dtype=np.uint8))
             finally:
                 writer.release()

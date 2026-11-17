@@ -30,7 +30,7 @@ class WorkerTests(unittest.TestCase):
                 path=root/'synthetic.avi'
                 writer=cv2.VideoWriter(str(path),cv2.VideoWriter_fourcc(*'MJPG'),10,(320,240))
                 image=np.full((240,320,3),70,np.uint8)
-                for _ in range(8): writer.write(image)
+                for _ in range(36): writer.write(image)
                 writer.release()
                 (root/'model.pt').write_bytes(b'test-only-no-real-weights')
                 tracker=GlobalTracker(transitions={})

@@ -180,46 +180,6 @@ function App({onLogout, user}) {
     setNotice('로컬 영상 미리보기입니다. YOLO 분석은 수행하지 않습니다.');
   }
 
-  function exportCsv() {
-    const rows = [
-      ['ID', '감지/기록 시각 (UTC)', '카메라', '감지 클래스', '신뢰도', '확인 상태', '영상 위치 (초)', '당시 감지 인원', '해당 미착용 추정 인원', '전체 미착용 추정 인원', '사람 연결 불가 감지 수'],
-      ...shown.map((event) => [
-        event.id,
-        event.detected_at ?? event.time,
-        event.camera,
-        (event.violation_types ?? [event.equipment]).join(' / '),
-        event.worker,
-        event.reviewed ? '확인 완료' : '확인 필요',
-        event.video_seconds, event.person_count, event.event_person_count,
-        event.noncompliant_person_count, event.unassigned_negative_count,
-      ]),
-    ];
-
-    const csv = rows
-      .map((row) =>
-        row
-          .map((value) => `"${String(value ?? '').replaceAll('"', '""')}"`)
-          .join(',')
-      )
-      .join('\r\n');
-
-    const blob = new Blob(['\uFEFF' + csv], {
-      type: 'text/csv;charset=utf-8;',
-    });
-
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-
-    link.href = url;
-    link.download = '안전장비_감지이벤트.csv';
-
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
-  }
-
   function saveSettings() {
     const value = Number(seconds);
 
@@ -401,7 +361,7 @@ function App({onLogout, user}) {
               </>}
               <EventPanel events={shown} summary={summary} connection={connection} filter={filter} setFilter={setFilter}
                 equipment={equipment} setEquipment={setEquipment} day={day} setDay={setDay} review={review}
-                exportCsv={exportCsv} onJump={jumpToEvent} canLoadMore={events.length >= eventLimit && eventLimit < 1000}
+                onJump={jumpToEvent} canLoadMore={events.length >= eventLimit && eventLimit < 1000}
                 loadMore={() => setEventLimit((value) => Math.min(value + 100, 1000))}/>
 
             </>

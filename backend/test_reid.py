@@ -105,7 +105,8 @@ class ReIDTests(unittest.TestCase):
             recorder=EventRecorder(camera,'model.pt','camera',camera_name=camera)
             track={'id':'local','recorded':False}
             stamp=datetime.fromtimestamp(self.now+seconds,timezone.utc).isoformat()
-            recorder.record(detections,0,0,stamp,tracks={0:track},identities={'local':identity})
+            for frame in range(7):
+                recorder.record(detections,frame,frame / 2,stamp,tracks={0:track},identities={'local':identity})
             trackers.append((recorder,track))
         rows=database.get_events()
         self.assertEqual(len(rows),2)

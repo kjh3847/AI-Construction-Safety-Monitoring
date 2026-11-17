@@ -1,14 +1,46 @@
 """Record explicit negative model classes, not inferred worker violations."""
 import os
+from collections import deque
 from database import save_event, get_connection
 import json
 from person_safety import event_counts, associate_people
 from person_tracker import PersonTracker
 
-NEGATIVE_CLASSES = {'NO-Hardhat', 'NO-Safety Vest'}
 WARNING_INTERVAL_SECONDS = 600
 # Brief model dropouts do not imply that a worker put their equipment on.
 CONTINUITY_GAP_SECONDS = 2
+CONFIRMATION_SECONDS = 3
+MIN_CONFIRMATION_SAMPLES = 5
+
+
+def confirmed_violations(track, person, frame_number, seconds):
+    """Confirm each equipment class from the same track's recent observations."""
+    samples = track.get('ppe_samples')
+    if samples is None:
+        samples = track['ppe_samples'] = deque()
+    if samples and not 0 <= seconds - samples[-1][0] <= CONTINUITY_GAP_SECONDS:
+        samples.clear()
+    negative = set(person['violations']).difference(person['worn'])
+    if samples and seconds == samples[-1][0]:
+        samples.pop()
+    samples.append((seconds, frame_number, negative))
+
+    cutoff = seconds - CONFIRMATION_SECONDS
+    # Keep one sample at or before the boundary to check the time span.
+    while len(samples) > 1 and samples[1][0] <= cutoff:
+        samples.popleft()
+    if samples[0][0] > cutoff:
+        return {}
+    recent = [sample for sample in samples if sample[0] >= cutoff]
+    if len(recent) < MIN_CONFIRMATION_SAMPLES:
+        return {}
+
+    confirmed = {}
+    for equipment in negative:
+        matching = [sample for sample in recent if equipment in sample[2]]
+        if len(matching) * 5 >= len(recent) * 4:
+            confirmed[equipment] = matching[0][:2]
+    return confirmed
 
 
 class EventRecorder:
@@ -29,11 +61,15 @@ class EventRecorder:
         saved = []
         for person in association['person_safety']:
             track = tracks.get(person['detection_index'])
-            if not person['violations'] or track is None:
+            if track is None:
+                continue
+            confirmed = confirmed_violations(track, person, frame_number, video_seconds)
+            if not confirmed:
                 continue
             if ('last_negative' not in track or
                     video_seconds - track['last_negative'] > CONTINUITY_GAP_SECONDS):
-                track.update(negative_since=video_seconds, negative_start_frame=frame_number,
+                since, start_frame = min(confirmed.values())
+                track.update(negative_since=since, negative_start_frame=start_frame,
                              warning_bucket=0)
             track['last_negative'] = video_seconds
             duration = max(0, video_seconds - track['negative_since'])
@@ -42,7 +78,8 @@ class EventRecorder:
             if track['recorded'] and not is_warning:
                 continue
             # Only explicit negative boxes unambiguously linked to this person.
-            evidence = [detections[i] for i in person['evidence_indices']]
+            evidence = [detections[i] for i in person['evidence_indices']
+                        if detections[i]['class_name'] in confirmed]
             strongest = max(evidence, key=lambda d: d['confidence'])
             key = f"{self.source_id}:{self.camera_name}:person-v1:{track['id']}"
             if is_warning:
@@ -60,13 +97,13 @@ class EventRecorder:
                     from datetime import datetime
                     elapsed = (datetime.fromisoformat(detected_at.replace('Z','+00:00'))-
                                datetime.fromisoformat(previous['detected_at'].replace('Z','+00:00'))).total_seconds()
-                    suppressed = 0 <= elapsed <= 60 and set(json.loads(previous['violation_types'] or '[]')) == set(person['violations'])
+                    suppressed = 0 <= elapsed <= 60 and set(json.loads(previous['violation_types'] or '[]')) == confirmed.keys()
             event_id = save_event(
                 camera_name=self.camera_name, event_type=strongest['class_name'],
                 model_name=self.model_name, confidence=strongest['confidence'],
                 source_name=self.source_name, video_seconds=video_seconds, event_key=key,
                 detected_at=detected_at, counts=counts, person_track_id=track['id'],
-                violation_types=person['violations'],
+                violation_types=sorted(confirmed),
                 event_reason='sustained' if is_warning else 'initial',
                 sustained_seconds=duration, repeat_index=bucket if is_warning else 0,
                 global_person_id=identity.get('global_person_id'), tracklet_id=identity.get('tracklet_id'),

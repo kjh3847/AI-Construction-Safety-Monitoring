@@ -26,7 +26,8 @@ class EventFactsTest(unittest.TestCase):
 
     def test_counts_are_class_specific_and_persist_after_replay(self):
         recorder = EventRecorder('hash','best.pt','test.mp4')
-        recorder.record(self.detections(),107,3.57,'2026-09-22T01:02:03.456Z')
+        for frame in range(7):
+            recorder.record(self.detections(), frame, frame / 2, '2026-09-22T01:02:03.456Z')
         rows = {row['event_type']:row for row in database.get_events()}
         self.assertEqual(rows['NO-Hardhat']['event_person_count'],1)
         self.assertEqual(rows['NO-Safety Vest']['event_person_count'],1)
@@ -36,10 +37,12 @@ class EventFactsTest(unittest.TestCase):
             self.assertEqual(row['person_count'],2)
             self.assertEqual(row['noncompliant_person_count'],2)
             self.assertEqual(row['detected_at'],'2026-09-22T01:02:03.456Z')
-            self.assertEqual(row['video_seconds'],3.57)
+            self.assertEqual(row['video_seconds'],3)
         event_id = rows['NO-Hardhat']['id']
         database.review_event(event_id)
-        EventRecorder('hash','best.pt','test.mp4').record(self.detections(),107,3.57,'2026-09-23T01:02:03.456Z')
+        replay = EventRecorder('hash','best.pt','test.mp4')
+        for frame in range(7):
+            replay.record(self.detections(), frame, frame / 2, '2026-09-23T01:02:03.456Z')
         self.assertEqual(database.event_summary()['total'],2)
         again = database.get_event(event_id)
         self.assertEqual(again['detected_at'],'2026-09-22T01:02:03.456Z')

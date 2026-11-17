@@ -12,8 +12,9 @@ class SustainedWarningTest(unittest.TestCase):
 
     def run_until(self, start, end, recorder=None):
         recorder = recorder or self.recorder
-        for second in range(start, end+1):
-            recorder.record(person(),second,second,'2026-09-22T01:00:00.000Z')
+        first_frame = max(0, start * 2 - 1)
+        for frame in range(first_frame, end * 2 + 1):
+            recorder.record(person(),frame,frame / 2,'2026-09-22T01:00:00.000Z')
 
     def test_boundary_and_twenty_minutes_with_replay(self):
         self.run_until(0,599)
@@ -38,8 +39,8 @@ class SustainedWarningTest(unittest.TestCase):
 
     def test_missing_evidence_resets_continuity_without_new_initial_capture(self):
         self.run_until(0,599)
-        for second in range(600,604):
-            self.recorder.record(person(bad=False),second,second)
+        for frame in range(1199,1208):
+            self.recorder.record(person(bad=False),frame,frame / 2)
         self.run_until(604,1203)
         self.assertEqual(database.event_summary()['total'],1)
         self.run_until(1204,1204)
@@ -48,14 +49,15 @@ class SustainedWarningTest(unittest.TestCase):
 
     def test_brief_dropout_and_next_frame_do_not_duplicate(self):
         self.run_until(0,598)
-        self.recorder.record([],599,599)
-        self.run_until(600,601)
+        self.recorder.record([],1197,598.5)
+        self.run_until(599,601)
         self.assertEqual(database.event_summary()['total'],2)
         self.assertEqual(self.recorder.episode_keys,[])
 
     def test_other_person_does_not_inherit_duration(self):
         self.run_until(0,599)
-        self.recorder.record(person(300),600,600)
+        for frame in range(1200,1207):
+            self.recorder.record(person(300),frame,frame / 2)
         rows = database.get_events()
         self.assertEqual(len(rows),2)
         self.assertTrue(all(row['event_reason']=='initial' for row in rows))

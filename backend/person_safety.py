@@ -3,6 +3,7 @@ import math
 
 ASSOCIATION_METHOD = 'spatial-v1'
 NEGATIVE_CLASSES = {'NO-Hardhat', 'NO-Safety Vest'}
+POSITIVE_CLASSES = {'Hardhat': 'NO-Hardhat', 'Safety Vest': 'NO-Safety Vest'}
 
 
 def event_counts(detections, event_type):
@@ -34,11 +35,14 @@ def associate_people(detections):
                 'person_association_method': 'unavailable', 'person_safety': []}
     people = [(i, d['bbox']) for i, d in relevant if d['class_name'] == 'Person']
     violations = {i: set() for i, _ in people}
+    worn = {i: set() for i, _ in people}
     evidence = {i: [] for i, _ in people}
     unassigned = 0
-    for detection_index, detection in relevant:
+    for detection_index, detection in enumerate(detections):
         name = detection['class_name']
-        if name not in NEGATIVE_CLASSES:
+        negative = name in NEGATIVE_CLASSES
+        equipment = name if negative else POSITIVE_CLASSES.get(name)
+        if equipment is None or _box(detection) is None:
             continue
         x1, y1, x2, y2 = detection['bbox']
         cx, cy = (x1+x2)/2, (y1+y2)/2
@@ -46,8 +50,8 @@ def associate_people(detections):
         candidates = []
         for person_index, (px1, py1, px2, py2) in people:
             relative_y = (cy-py1)/(py2-py1)
-            # Explicit negative evidence must lie on the head/torso region.
-            low, high = (0, .45) if name == 'NO-Hardhat' else (.15, .85)
+            # Equipment evidence must lie on the head or torso region.
+            low, high = (0, .45) if equipment == 'NO-Hardhat' else (.15, .85)
             if not (px1 <= cx <= px2 and low <= relative_y <= high):
                 continue
             intersection = max(0, min(x2,px2)-max(x1,px1)) * max(0,min(y2,py2)-max(y1,py1))
@@ -59,14 +63,16 @@ def associate_people(detections):
         candidates.sort(reverse=True)
         # Crowded/overlapping people: do not force a near-tie to either person.
         if not candidates or (len(candidates)>1 and candidates[0][0]-candidates[1][0] < .15):
-            unassigned += 1
-        else:
+            unassigned += int(negative)
+        elif negative:
             violations[candidates[0][1]].add(name)
             evidence[candidates[0][1]].append(detection_index)
+        else:
+            worn[candidates[0][1]].add(equipment)
     return {
         'noncompliant_person_count': sum(bool(names) for names in violations.values()),
         'unassigned_negative_count': unassigned,
         'person_association_method': ASSOCIATION_METHOD,
-        'person_safety': [{'detection_index': i, 'violations': sorted(names),
+        'person_safety': [{'detection_index': i, 'violations': sorted(names), 'worn': sorted(worn[i]),
                            'evidence_indices': evidence[i]} for i, names in violations.items()],
     }
