@@ -30,14 +30,13 @@ def create_clip(path, shade):
 class InteractiveExhibitionTest(unittest.TestCase):
     def test_qr_publish_lifecycle_and_s3_playback(self):
         origin = 'https://exhibition.example'
-        operator = 'fixture-only-' + 'a' * 32
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             videos = root / 'videos'
             videos.mkdir()
             env = {
                 'EXHIBITION_ENABLED': 'true', 'EXHIBITION_INTERACTIVE': 'true',
-                'EXHIBITION_OPERATOR_KEY': operator, 'PUBLIC_APP_URL': origin,
+                'EXHIBITION_OPERATOR_KEY': '', 'PUBLIC_APP_URL': origin,
                 'EXHIBITION_VIDEO_DIR': str(videos), 'MONITOR_STORAGE_DIR': str(root / 'recordings'),
                 'MEDIA_ENABLED': 'true', 'MEDIA_AI_PASSWORD': 'test', 'MEDIA_WEB_PASSWORD': 'test',
                 'LOCAL_DEMO_ENABLED': 'false', 'MONITOR_AUTOSTART': 'true', 'ANALYSIS_FPS': '5',
@@ -92,15 +91,22 @@ class InteractiveExhibitionTest(unittest.TestCase):
                         self.assertFalse(client.get('/api/status?camera_id=CAM-01').json()['relay']['reserved'])
                         self.assertEqual(upstream, [('POST', '/cam01/whip'), ('DELETE', '/cam01/whip/fixture')])
 
-                        headers = {'x-exhibition-key': operator}
-                        self.assertEqual(client.post('/api/monitor/start?camera_id=CAM-01', headers=headers).status_code, 409)
+                        headers = {'origin': origin}
+                        for other_camera in ('CAM-01', 'all'):
+                            self.assertEqual(client.post('/api/monitor/start?camera_id=' + other_camera,
+                                                         headers=headers).status_code, 403)
+                        self.assertEqual(client.patch('/api/settings', json={'retention_seconds': 60},
+                                                      headers=headers).status_code, 403)
                         for camera, filename, shade in (('CAM-04', '착용.mp4', 35), ('CAM-05', '미착용.mp4', 195)):
                             video_url = '/api/exhibition/video/' + camera
                             self.assertEqual(client.get(video_url).status_code, 404)
                             create_clip(videos / filename, shade)
                             self.assertTrue(client.get('/api/status?camera_id=' + camera).json()['configured'])
                             self.assertEqual(client.get(video_url, headers={'Range': 'bytes=0-19'}).status_code, 206)
-                            response = client.post('/api/monitor/start?camera_id=' + camera, headers=headers)
+                            start_url = '/api/monitor/start?camera_id=' + camera
+                            self.assertEqual(client.post(start_url).status_code, 403)
+                            self.assertEqual(client.post(start_url, headers={'origin': 'https://other.example'}).status_code, 403)
+                            response = client.post(start_url, headers=headers)
                             self.assertEqual(response.status_code, 200)
                             with client.websocket_connect('/api/metadata/' + camera, headers={'origin': origin}) as socket:
                                 metadata = socket.receive_json()
@@ -114,6 +120,10 @@ class InteractiveExhibitionTest(unittest.TestCase):
                         for source in main.s3_monitors.values():
                             self.assertEqual(source.status()['state'], 'running')
                             self.assertGreaterEqual(source.latest_frame()[0]['frame_id'], 22)
+                            stopped = client.post('/api/monitor/stop?camera_id=' + source.camera_id, headers=headers)
+                            self.assertEqual(stopped.status_code, 200)
+                            source.thread.join(timeout=2)
+                            self.assertEqual(source.status()['state'], 'stopped')
                         self.assertEqual(client.get('/api/recordings/frame?camera_id=CAM-01').status_code, 410)
             finally:
                 sys.modules.pop('main', None)

@@ -316,11 +316,11 @@ function App({onLogout, user, exhibition = false, interactive = false}) {
               {pending > 0 && <i />}
             </button>
 
-            {exhibition ? (
+            {exhibition ? (!interactive && (
               <button className="text-btn" onClick={operator ? closeOperator : () => setSetupOpen(value => !value)}>
                 <Settings size={16}/>{operator ? '운영 설정 닫기' : '운영 설정'}
               </button>
-            ) : <ProfileMenu onLogout={onLogout} user={user}/>}
+            )) : <ProfileMenu onLogout={onLogout} user={user}/>}
           </div>
         </header>
 

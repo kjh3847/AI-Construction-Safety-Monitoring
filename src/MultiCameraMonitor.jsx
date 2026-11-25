@@ -109,7 +109,7 @@ function CameraTile({camera, status, connection, jump, onFrame, onStatus, exhibi
     </div>
     {s3 && past && <button onClick={() => setPast(null)}>시연 화면으로 돌아가기</button>}
     {(visitor || s3) && <button onClick={toggleFullscreen} disabled={visitor && !status?.relay?.online}>{fullscreen ? '전체화면 종료' : '전체화면'}</button>}
-    {canOperate && !visitor && <div className="feed-footer">
+    {(canOperate || s3) && !visitor && <div className="feed-footer">
       <button className="primary" disabled={busy || progress !== null || !status?.configured || recording} onClick={()=>control('start')}>감지·녹화 시작</button>
       <button className="danger-button" disabled={busy || !['running','starting','reconnecting','disconnected'].includes(status?.state)} onClick={()=>control('stop')}>중단</button>
       {testCamera && <>

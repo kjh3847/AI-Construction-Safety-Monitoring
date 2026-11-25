@@ -42,7 +42,7 @@ if LOCAL_DEMO:
 
 
 if EXHIBITION:
-    if LOCAL_DEMO or len(EXHIBITION_KEY) < 32:
+    if LOCAL_DEMO or (not INTERACTIVE and len(EXHIBITION_KEY) < 32):
         raise RuntimeError('Exhibition requires its own runtime and an operator key of at least 32 characters.')
 
     def monitor_user():
@@ -50,7 +50,8 @@ if EXHIBITION:
 
     def require_operator(request: Request):
         supplied = request.headers.get('x-exhibition-key', '')
-        if not secrets.compare_digest(supplied.encode('utf-8'), EXHIBITION_KEY.encode('utf-8')):
+        if len(EXHIBITION_KEY) < 32 or not secrets.compare_digest(
+                supplied.encode('utf-8'), EXHIBITION_KEY.encode('utf-8')):
             raise HTTPException(403, '전시 운영 키를 확인하세요.')
         return {'employee_id': 'exhibition-operator', 'role': 'admin'}
 else:
@@ -314,9 +315,9 @@ if EXHIBITION:
 
 
 if INTERACTIVE:
-    def publish_origin(request):
+    def require_exhibition_origin(request):
         if not origin_allowed(request.headers.get('origin', ''), os.getenv('PUBLIC_APP_URL', '')):
-            raise HTTPException(403, '전시 페이지에서 카메라를 연결하세요.')
+            raise HTTPException(403, '전시 페이지에서 이 기능을 사용하세요.')
 
 
     @lru_cache(maxsize=3)
@@ -342,7 +343,7 @@ if INTERACTIVE:
 
     @app.post('/api/exhibition/publish/{camera_id}')
     async def publish_camera(camera_id: str, request: Request):
-        publish_origin(request)
+        require_exhibition_origin(request)
         if request.headers.get('content-type', '').split(';')[0] != 'application/sdp':
             raise HTTPException(415, '카메라 연결 데이터 형식이 올바르지 않습니다.')
         offer = bytearray()
@@ -357,14 +358,14 @@ if INTERACTIVE:
 
     @app.post('/api/exhibition/publish/{camera_id}/{token}', status_code=204)
     async def keep_camera(camera_id: str, token: str, request: Request):
-        publish_origin(request)
+        require_exhibition_origin(request)
         media_gateway.refresh_publisher(camera_id, token)
         return Response(status_code=204)
 
 
     @app.delete('/api/exhibition/publish/{camera_id}/{token}', status_code=204)
     async def end_camera(camera_id: str, token: str, request: Request):
-        publish_origin(request)
+        require_exhibition_origin(request)
         await media_gateway.stop_publisher(camera_id, token)
         return Response(status_code=204)
 
@@ -414,7 +415,17 @@ async def whep_delete(key: str,request: Request):
     return Response(status_code=204)
 
 
-@app.post('/api/monitor/start', dependencies=[Depends(require_operator)])
+if INTERACTIVE:
+    def require_playback_control(request: Request, camera_id: str = 'CAM-01'):
+        if camera_id in s3_monitors:
+            require_exhibition_origin(request)
+            return
+        require_operator(request)
+else:
+    require_playback_control = require_operator
+
+
+@app.post('/api/monitor/start', dependencies=[Depends(require_playback_control)])
 def start_monitor(camera_id: str = 'CAM-01'):
     if camera_id == 'all':
         for source in monitors().values():
@@ -430,7 +441,7 @@ def start_monitor(camera_id: str = 'CAM-01'):
     return status(camera_id)
 
 
-@app.post('/api/monitor/stop', dependencies=[Depends(require_operator)])
+@app.post('/api/monitor/stop', dependencies=[Depends(require_playback_control)])
 def stop_monitor(camera_id: str = 'CAM-01'):
     if camera_id == 'all':
         for source in monitors().values():

@@ -20,7 +20,7 @@ model_file="$(find . -type f -name '2026_09_21_best.pt' -print -quit)"
 test -n "$model_file" && install -m 0644 "$model_file" models/best.pt
 if [ ! -e .env ]; then
   (umask 077
-   printf 'PUBLIC_APP_URL=https://safety-monitor-2026.duckdns.org\nEXHIBITION_STREAM_HOST=safety-monitor-2026.duckdns.org\nEXHIBITION_MODEL_FILE=./models/best.pt\nEXHIBITION_OPERATOR_KEY=%s\nEXHIBITION_RELAY_KEY=%s\n' "$(openssl rand -hex 32)" "$(openssl rand -hex 32)" > .env)
+   printf 'PUBLIC_APP_URL=https://safety-monitor-2026.duckdns.org\nEXHIBITION_STREAM_HOST=safety-monitor-2026.duckdns.org\nEXHIBITION_MODEL_FILE=./models/best.pt\nEXHIBITION_RELAY_KEY=%s\n' "$(openssl rand -hex 32)" > .env)
 fi
 ```
 
@@ -83,10 +83,10 @@ cd ~/safety-exhibition-qr-s3
 bash deploy/sync-exhibition-videos.sh 's3://내-버킷-이름'
 ```
 
-버킷 안 폴더에 저장했다면 `s3://내-버킷-이름/폴더이름`을 넣습니다. 동기화가 끝나면 전시 화면에서 **운영 설정**을 열고 CAM4, CAM5의 **감지·녹화 시작**을 각각 누릅니다. 운영 키는 EC2 터미널에서 `grep '^EXHIBITION_OPERATOR_KEY=' .env`로 확인합니다. 파일을 교체할 때는 CAM4·5을 중단한 다음 동기화 명령을 다시 실행합니다.
+버킷 안 폴더에 저장했다면 `s3://내-버킷-이름/폴더이름`을 넣습니다. 동기화가 끝나면 전시 화면에서 CAM4와 CAM5의 **감지·녹화 시작**을 각각 누릅니다. 두 버튼은 전시 화면에서 바로 사용할 수 있습니다. 파일을 교체할 때는 CAM4·5를 중단한 다음 동기화 명령을 다시 실행합니다.
 
 ## 4. 전시 직전 확인과 복귀
 
 - 시연 영상은 브라우저에서 재생 가능한 H.264 MP4를 사용합니다. 720p 정도로 준비하면 대역폭을 아낄 수 있습니다.
-- 관객 휴대폰 3대와 CAM4·5을 동시에 켜고 **운영 설정**의 CPU 사용률과 채널별 분석 FPS를 봅니다. 영상은 재생되는데 박스 갱신만 느리면 `EXHIBITION_ANALYSIS_FPS=4`부터 확인합니다. 기본 추론 크기는 `512`이며, 멀리 있는 보호구가 잘 안 보이면 `EXHIBITION_INFERENCE_SIZE=640`에서 속도와 함께 비교합니다. 환경값 변경 후 Compose의 `up -d`를 다시 실행합니다.
+- 관객 휴대폰 3대와 CAM4·5를 동시에 켜고 EC2 터미널의 `sudo docker stats`로 CPU 사용률을, 전시 화면에서 채널별 분석 FPS를 확인합니다. 영상은 재생되는데 박스 갱신만 느리면 `EXHIBITION_ANALYSIS_FPS=4`부터 확인합니다. 기본 추론 크기는 `512`이며, 멀리 있는 보호구가 잘 안 보이면 `EXHIBITION_INFERENCE_SIZE=640`에서 속도와 함께 비교합니다. 환경값 변경 후 Compose의 `up -d`를 다시 실행합니다.
 - 기존 전시 앱으로 돌아갈 때는 HTTPS의 전시 경로를 기존 8081로 돌리고 프록시 설정을 검사한 뒤 다시 읽힙니다. 새 전시 앱은 해당 폴더에서 `docker compose -f compose.exhibition.yaml stop`으로 중단합니다.
