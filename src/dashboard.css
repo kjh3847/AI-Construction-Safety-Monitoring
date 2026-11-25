@@ -98,3 +98,13 @@
 .cctv .local-preview video{max-height:50vh}
 @media(max-width:1050px){.cctv .multi-camera-grid{--camera-width:calc((100% - 12px) / 2);--camera-span:2}}
 @media(max-width:700px){.cctv .multi-camera-grid{--camera-width:100%;--camera-span:1}}
+
+.cctv .camera-registration{display:flex;align-items:end;gap:8px;flex-wrap:wrap;margin:8px 0}
+.cctv .camera-registration label{display:grid;flex:1;gap:5px;font-size:.875rem}
+.cctv .camera-registration input{min-width:0;padding:8px;color:inherit;background:transparent;border:1px solid #526279;border-radius:5px}
+.cctv .camera-registration button{padding:8px 12px}
+.cctv .camera-scroll-controls{flex-wrap:wrap}
+
+@media(min-width:701px){
+  .cctv .multi-camera-grid[data-exhibition]{--camera-width:calc((100% - 12px) / 2);--camera-span:2}
+}

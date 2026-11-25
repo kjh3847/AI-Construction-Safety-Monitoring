@@ -11,13 +11,13 @@ import {
   CircleHelp,
 } from 'lucide-react';
 
-import { cameras } from './data';
+import {cameras as standardCameras, exhibitionCameras} from './data';
 import MultiCameraMonitor from './MultiCameraMonitor';
 import EventPanel from './EventPanel';
 import LoginPage from './LoginPage';
 import AccountPage from './AccountPage';
 import ProfileMenu from './ProfileMenu';
-import { API_BASE, accountRequest } from './api';
+import { API_BASE, accountRequest, operatorHeaders, setExhibitionKey } from './api';
 import './styles.css';
 import './dashboard.css';
 
@@ -26,7 +26,7 @@ const API_BASE_URL = API_BASE;
 
 async function request(path, options = {}) {
   const response = await fetch(`${API_BASE_URL}${path}`, {
-    ...options, credentials: 'include', signal: AbortSignal.timeout(5000),
+    ...options, headers: {...options.headers, ...operatorHeaders(options.method)}, credentials: 'include', signal: AbortSignal.timeout(5000),
   });
   if (response.status === 401) window.dispatchEvent(new Event('session-expired'));
   if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -49,7 +49,30 @@ function read(key, fallback) {
   }
 }
 
-function App({onLogout, user}) {
+function App({onLogout, user, exhibition = false}) {
+  const cameras = exhibition ? exhibitionCameras : standardCameras;
+  const [operator, setOperator] = useState(false);
+  const [setupOpen, setSetupOpen] = useState(false);
+  const canOperate = !exhibition || operator;
+
+  async function openOperator(event) {
+    event.preventDefault();
+    const key = new FormData(event.currentTarget).get('key');
+    try {
+      await accountRequest('/api/exhibition/operator', {method: 'POST', headers: {'X-Exhibition-Key': key}});
+      setExhibitionKey(key);
+      setOperator(true);
+      setSetupOpen(false);
+    } catch (error) {
+      setNotice(error.message);
+    }
+  }
+
+  function closeOperator() {
+    setExhibitionKey('');
+    setOperator(false);
+    setPage('monitor');
+  }
   const [page, setPage] = useState('monitor');
 
   const [events, setEvents] = useState([]);
@@ -58,6 +81,7 @@ function App({onLogout, user}) {
   const [connection, setConnection] = useState('loading');
   const [eventLimit, setEventLimit] = useState(100);
   const [day, setDay] = useState('');
+  const [eventCamera, setEventCamera] = useState('');
   const [jump, setJump] = useState(null);
   const [retention, setRetention] = useState(30 * 86400);
 
@@ -66,7 +90,7 @@ function App({onLogout, user}) {
   const [video, setVideo] = useState(null);
   const [notice, setNotice] = useState('');
 
-  const eventQuery = `/api/events?limit=${eventLimit}${day ? `&day=${day}` : ''}${equipment !== 'all' ? `&event_type=${encodeURIComponent(equipment)}` : ''}${filter !== 'all' ? `&review_status=${filter}` : ''}`;
+  const eventQuery = `/api/events?limit=${eventLimit}${day ? `&day=${day}` : ''}${equipment !== 'all' ? `&event_type=${encodeURIComponent(equipment)}` : ''}${filter !== 'all' ? `&review_status=${filter}` : ''}` + (eventCamera ? '&camera_id=' + eventCamera : '');
 
   useEffect(() => {
     let active=true;
@@ -245,7 +269,7 @@ function App({onLogout, user}) {
             ['monitor', LayoutDashboard, '현장 모니터링'],
             ['events', History, '이벤트 이력'],
             ['settings', Settings, '설정'],
-          ].map(([key, Icon, label]) => (
+          ].filter(([key]) => key !== 'settings' || canOperate).map(([key, Icon, label]) => (
             <button
               key={key}
               className={page === key ? 'active' : ''}
@@ -291,11 +315,19 @@ function App({onLogout, user}) {
               {pending > 0 && <i />}
             </button>
 
-            <ProfileMenu onLogout={onLogout} user={user}/>
+            {exhibition ? (
+              <button className="text-btn" onClick={operator ? closeOperator : () => setSetupOpen(value => !value)}>
+                <Settings size={16}/>{operator ? '운영 설정 닫기' : '운영 설정'}
+              </button>
+            ) : <ProfileMenu onLogout={onLogout} user={user}/>}
           </div>
         </header>
 
         <main>
+          {setupOpen && <form className="panel camera-registration" onSubmit={openOperator}>
+            <label>전시 운영 키<input name="key" type="password" autoComplete="off" required autoFocus/></label>
+            <button type="submit">설정 열기</button>
+          </form>}
           <div className="page-heading">
             <div>
               <div className="eyebrow">SAFETY CONTROL CENTER</div>
@@ -355,12 +387,13 @@ function App({onLogout, user}) {
                   <Stat label="현재 미착용 추정 인원 합계" value={totals.active ? totals.violations : '—'} unit="명" detail="각 카메라의 명시적 미착용 증거 기준" warning icon={<ShieldCheck/>}/>
                   <Stat label="오늘 누적 이벤트" value={summary?.today ?? '—'} unit="건" detail="전체 카메라 · 한국 시간 기준" warning icon={<Bell/>}/>
                 </div>
-                <MultiCameraMonitor jump={jump} onTotals={setTotals}/>
-                <button className="text-btn" onClick={() => fileRef.current?.click()}><Upload size={15}/>파일 미리보기</button>
+                <MultiCameraMonitor jump={jump} onTotals={setTotals} cameras={cameras} exhibition={exhibition} canOperate={canOperate}/>
+                {!exhibition && <button className="text-btn" onClick={() => fileRef.current?.click()}><Upload size={15}/>파일 미리보기</button>}
                 {video && <div className="local-preview"><video controls src={video.url}/><p>로컬 파일 미리보기 · AI 분석 없음</p><button onClick={() => setVideo(null)}>미리보기 닫기</button></div>}
               </>}
               <EventPanel events={shown} summary={summary} connection={connection} filter={filter} setFilter={setFilter}
-                equipment={equipment} setEquipment={setEquipment} day={day} setDay={setDay} review={review}
+                equipment={equipment} setEquipment={setEquipment} day={day} setDay={setDay}
+                cameras={exhibition ? cameras : null} camera={eventCamera} setCamera={setEventCamera} review={canOperate ? review : null}
                 onJump={jumpToEvent} canLoadMore={events.length >= eventLimit && eventLimit < 1000}
                 loadMore={() => setEventLimit((value) => Math.min(value + 100, 1000))}/>
 
@@ -417,15 +450,23 @@ function Root() {
   useEffect(() => {
     const expire = () => setUser(null);
     window.addEventListener('session-expired', expire);
-    accountRequest('/api/auth/me').then(setUser).catch(e => setMessage(e.message)).finally(() => setLoading(false));
-    accountRequest('/api/runtime').then(setRuntime).catch(()=>{});
+    async function loadRuntime() {
+      const mode = await accountRequest('/api/runtime', {signal: AbortSignal.timeout(5000)}).catch(() => null);
+      setRuntime(mode);
+      if (!mode?.exhibition) {
+        await accountRequest('/api/auth/me').then(setUser).catch(error => setMessage(error.message));
+      }
+      setLoading(false);
+    }
+    loadRuntime();
     return () => window.removeEventListener('session-expired', expire);
   }, []);
   async function logout() {
     try { await accountRequest('/api/auth/logout', {method:'POST'}); setMessage(''); setUser(null); return true; }
     catch(e) {setMessage(e.message); return false;}
   }
-  if (loading) return <div className="login-page">로그인 상태 확인 중…</div>;
+  if (runtime?.exhibition) return <App exhibition/>;
+  if (loading) return <div className="login-page">서비스 연결 확인 중…</div>;
   if (!user || user.must_change_password) return <LoginPage user={user} localDemo={runtime?.local_demo} onLogin={result=>{setMessage('');setUser(result);}} onLogout={()=>setUser(null)}/>;
   if (window.location.pathname === '/admin/accounts') {
     if (user.role !== 'system') return <div className="login-page"><p>시스템팀 권한이 필요합니다. <a href="/">대시보드로 이동</a></p></div>;

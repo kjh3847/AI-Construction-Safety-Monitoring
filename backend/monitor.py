@@ -2,6 +2,7 @@
 import base64
 from datetime import datetime, timezone
 import hashlib
+import json
 import os
 os.environ.setdefault('OPENCV_FFMPEG_LOGLEVEL','-8')
 from pathlib import Path
@@ -26,11 +27,13 @@ from frame_store import FrameStore
 
 class Monitor:
     def __init__(self, model, model_path, video_path, root, camera_name=None, use_camera_env=True,
-                 engine=None, global_tracker=None, camera_id=None, adapter='direct', upload_path=None):
+                 engine=None, global_tracker=None, camera_id=None, adapter='direct', upload_path=None, loop_upload=False):
         self.model = model
         self.adapter = adapter
         self.model_path = Path(model_path)
         source = os.getenv('CAMERA_SOURCE', '').strip() if use_camera_env else ''
+        self.loop_upload = loop_upload
+        self.source_config = None
         self.upload_path = Path(upload_path) if upload_path is not None else None
         existing_upload = self.upload_path if self.upload_path and self.upload_path.is_file() else None
         self.source, self.source_type = classify_source(existing_upload or source or video_path)
@@ -61,6 +64,28 @@ class Monitor:
         self.storage_error = None
         self.writer_queue = Queue(maxsize=32)
         self.writer = None
+
+    def load_saved_source(self, path):
+        self.source_config = path
+        if path.is_file():
+            address = json.loads(path.read_text(encoding='utf-8'))['url']
+            self.source, self.source_type = classify_source(address)
+            self.video_path = None
+            self.source_kind, self.source_name = 'camera', '라이브 카메라'
+
+    def register_source(self, address):
+        with self.lock:
+            if self.thread and self.thread.is_alive():
+                return False
+            pending = self.source_config.with_suffix('.tmp')
+            pending.write_text(json.dumps({'url': address}), encoding='utf-8')
+            pending.replace(self.source_config)
+            self.load_saved_source(self.source_config)
+            self.state, self.error = 'idle', None
+            self.latest, self.recording_id, self.updated_at = None, None, None
+            self.metrics = {}
+            self.start()
+            return True
 
     def install_upload(self, staged):
         with self.lock:
@@ -208,6 +233,7 @@ class Monitor:
             frame_id, analyzed, last_saved, last_generation = 0, 0, 0, None
             origin = time.monotonic()
             local_tracker = LocalBoTSORT()
+            loop_start_frame = 0
             self.writer = Thread(target=self._write_loop, daemon=True, name=f'{self.camera_id}-recording')
             self.writer.start()
             analysis_interval = 1/max(.1,float(os.getenv('ANALYSIS_FPS', '5')))
@@ -220,6 +246,14 @@ class Monitor:
                 else:
                     success, frame = cap.read()
                     captured = time.time()
+                if not success and self.loop_upload and frame_id > loop_start_frame and not self.stop_event.is_set():
+                    cap.release()
+                    cap = cv2.VideoCapture(self.source)
+                    success, frame = cap.read()
+                    captured = time.time()
+                    loop_start_frame = frame_id
+                    local_tracker = LocalBoTSORT()
+                    recorder.tracker.tracks.clear()
                 if not success:
                     if self.upload_path:
                         finished_upload = True
@@ -241,8 +275,9 @@ class Monitor:
                     frame = cv2.resize(frame, (max_width,round(frame.shape[0]*max_width/frame.shape[1])))
                 result, wait_ms, inference_ms = self.engine.predict(frame)
                 detections = local_tracker.detections(result, frame)
-                video_seconds = frame_id / fps if self.source_kind == 'test' else started - origin
-                tracks = recorder.tracker.update(detections, frame_id, video_seconds)
+                source_frame = frame_id - loop_start_frame
+                video_seconds = source_frame / fps if self.source_kind == 'test' else started - origin
+                tracks = recorder.tracker.update(detections, source_frame, video_seconds)
                 association = associate_people(detections)
                 people = [detections[p['detection_index']] for p in association['person_safety']]
                 violations = {str(detections[p['detection_index']]['track_id']):p['violations']
@@ -268,7 +303,7 @@ class Monitor:
                     detection = detections[person['detection_index']]
                     person.update(bbox=detection['bbox'], local_track_id=detection['track_id'],
                                   **identities.get(str(detection['track_id']), {}))
-                recorder.record(detections, frame_id, video_seconds,
+                recorder.record(detections, source_frame, video_seconds,
                     datetime.fromtimestamp(captured, timezone.utc).isoformat(timespec='milliseconds').replace('+00:00', 'Z'),
                     tracks=tracks, identities=identities)
                 # Encode the original pixels once. Labels are synchronized metadata.

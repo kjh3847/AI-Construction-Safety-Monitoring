@@ -1,4 +1,4 @@
-"""Bounded, resumable-in-order uploads for the single CAM-04 test source."""
+"""Bounded, resumable-in-order uploads for a test video channel."""
 from pathlib import Path
 from threading import Lock
 from time import monotonic
@@ -26,7 +26,7 @@ class TestVideoUpload:
                 self.pending.unlink(missing_ok=True)
             if offset == 0:
                 if self.session and self.session['owner'] != owner:
-                    raise HTTPException(409, '다른 사용자가 CAM 4 영상을 업로드 중입니다.')
+                    raise HTTPException(409, '다른 사용자가 테스트 영상을 업로드 중입니다.')
                 self.session = dict(owner=owner, id=upload_id, total=total, offset=0, time=now)
             session = self.session
             if (not session or (session['owner'], session['id'], session['total'], session['offset'])
@@ -49,7 +49,7 @@ class TestVideoUpload:
                     if not valid or frame is None:
                         raise HTTPException(422, '재생할 수 있는 영상 파일을 선택하세요.')
                     if not self.monitor.install_upload(self.pending):
-                        raise HTTPException(409, 'CAM 4 감지 녹화를 종료한 후 다시 업로드하세요.')
+                        raise HTTPException(409, '테스트 감지 녹화를 종료한 후 다시 업로드하세요.')
                     return {'received': total, 'ready': True}
                 finally:
                     self.session = None

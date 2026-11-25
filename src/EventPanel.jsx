@@ -36,7 +36,7 @@ function Snapshot({event}) {
   useEffect(() => setFailed(false), [event.id, event.snapshot_url]);
   return event.snapshot_url && !failed ? <img src={`${BASE}${event.snapshot_url}`} alt="실제 감지 스냅샷" onError={() => setFailed(true)}/> : <div className="snapshot-empty"><ImageOff size={22}/><span>스냅샷 없음</span></div>;
 }
-export default function EventPanel({events, connection, summary, filter, setFilter, equipment, setEquipment, day, setDay, review, onJump, loadMore, canLoadMore}) {
+export default function EventPanel({events, connection, summary, filter, setFilter, equipment, setEquipment, day, setDay, cameras, camera, setCamera, review, onJump, loadMore, canLoadMore}) {
   const sustainedWarnings = events.filter((event) => event.event_reason === 'sustained' && event.review_status !== 'reviewed');
   const [selected, setSelected] = useState(null);
   const [detail, setDetail] = useState(null);
@@ -93,6 +93,10 @@ export default function EventPanel({events, connection, summary, filter, setFilt
     <div className="event-filters">
       <label>날짜 (한국 시간)<input aria-label="이벤트 날짜" type="date" value={day} onChange={(e) => setDay(e.target.value)}/></label>
       <label>위반 종류<select value={equipment} onChange={(e) => setEquipment(e.target.value)}><option value="all">전체 종류</option><option value="NO-Hardhat">안전모 미착용 의심</option><option value="NO-Safety Vest">조끼 미착용 의심</option><option value="TEST_NO_HELMET">기존 테스트 기록</option></select></label>
+      {cameras && <label>카메라<select value={camera} onChange={event => setCamera(event.target.value)}>
+        <option value="">전체 카메라</option>
+        {cameras.map(item => <option key={item.id} value={item.id}>{item.id} · {item.name}</option>)}
+      </select></label>}
       <label>확인 여부<select value={filter} onChange={(e) => setFilter(e.target.value)}><option value="all">전체 상태</option><option value="pending">확인 필요</option><option value="reviewed">확인 완료</option></select></label>
     </div>
     {connection !== 'ready' && <div className="connection-note" role="status">{connection === 'loading' ? '이벤트 로딩 중' : '서버 연결 실패 · 마지막 조회 기록'}</div>}
@@ -103,7 +107,7 @@ export default function EventPanel({events, connection, summary, filter, setFilt
           <div className="event-thumb"><Snapshot event={event}/></div>
           <div className="event-description"><div className="event-title">{(event.violation_types ?? [event.event_type]).map(eventName).join(' · ')} {newIds.has(event.id) && <b className="new-badge">새 감지</b>}</div><EventFacts event={event}/><span>{cameraLabel(event)} · 신뢰도 {event.confidence == null ? '없음' : `${(event.confidence*100).toFixed(1)}%`}</span><span className={event.reviewed ? 'signal-good' : 'signal-caution'}>{event.reviewed ? '✓ 확인 완료' : '⚠ 확인 필요'}</span></div>
         </button>
-        {!event.reviewed && <button className="review" disabled={connection !== 'ready'} onClick={() => review(event.id)}><Check size={14}/>확인 완료 처리</button>}
+        {review && !event.reviewed && <button className="review" disabled={connection !== 'ready'} onClick={() => review(event.id)}><Check size={14}/>확인 완료 처리</button>}
       </article>)}
       {connection === 'ready' && events.length === 0 && <div className="state-empty">조건에 맞는 이벤트가 없습니다.</div>}
     </div>
@@ -114,7 +118,7 @@ export default function EventPanel({events, connection, summary, filter, setFilt
         {detailError && <p role="alert">{detailError}</p>}
         {!detail && !detailError && <p>상세 정보 로딩 중</p>}
         {detail && <><div className="detail-snapshot"><Snapshot event={detail}/></div><div className="detail-info"><h3>{(detail.violation_types ?? [detail.event_type]).map(eventName).join(' · ')}</h3><p>{cameraLabel(detail)}</p><EventFacts event={detail} detailed/><p>신뢰도 {detail.confidence == null ? '없음' : `${(detail.confidence*100).toFixed(1)}%`} · {detail.model_name ?? '모델 정보 없음'}</p><p>{detail.review_status === 'reviewed' ? '✓ 확인 완료' : '⚠ 확인 필요'}</p><p className="muted">이벤트 시작 프레임의 인원입니다. 여러 보호구 미착용도 전체 인원에서는 한 명으로 계산합니다. 모델의 미착용 의심 감지이며 위반 확정이 아닙니다.</p>
-          <div className="detail-actions"><button disabled={!detail.playable || !!detailError} onClick={async () => {if (await onJump(detail)) setSelected(null);}}><Play size={16}/>{detail.playable ? '해당 시점 영상 보기' : '재생 가능한 영상 없음'}</button><button disabled={detail.review_status === 'reviewed' || connection !== 'ready'} onClick={async () => {if (await review(detail.id)) setDetail({...detail, review_status:'reviewed'});}}><Check size={16}/>확인 완료</button></div></div></>}
+          <div className="detail-actions"><button disabled={!detail.playable || !!detailError} onClick={async () => {if (await onJump(detail)) setSelected(null);}}><Play size={16}/>{detail.playable ? '해당 시점 영상 보기' : '재생 가능한 영상 없음'}</button>{review && <button disabled={detail.review_status === 'reviewed' || connection !== 'ready'} onClick={async () => {if (await review(detail.id)) setDetail({...detail, review_status:'reviewed'});}}><Check size={16}/>확인 완료</button>}</div></div></>}
       </section>
     </div>}
   </section>;

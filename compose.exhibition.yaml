@@ -1,0 +1,49 @@
+name: safety-exhibition
+services:
+  monitor:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.monitor
+    restart: unless-stopped
+    init: true
+    stop_grace_period: 45s
+    environment:
+      EXHIBITION_ENABLED: 'true'
+      EXHIBITION_OPERATOR_KEY: ${EXHIBITION_OPERATOR_KEY:?Set EXHIBITION_OPERATOR_KEY}
+      PUBLIC_APP_URL: ${PUBLIC_APP_URL:?Set PUBLIC_APP_URL to the HTTPS origin}
+      MONITOR_AUTOSTART: 'true'
+      MODEL_PATH: /models/best.pt
+      SAFETY_DB_PATH: /data/safety.db
+      MONITOR_STORAGE_DIR: /data/recordings
+      RECORDING_MAX_BYTES_PER_CAMERA: 268435456
+      CAPTURE_MAX_WIDTH: 960
+      ANALYSIS_FPS: ${EXHIBITION_ANALYSIS_FPS:-5}
+    volumes:
+      - exhibition_data:/data
+      - ${EXHIBITION_MODEL_FILE:?Set EXHIBITION_MODEL_FILE}:/models/best.pt:ro
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8002/health',timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+    logging: &logging
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '3'
+  web:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.web
+      args:
+        WEB_BASE_PATH: /exhibition/
+    restart: unless-stopped
+    ports:
+      - '127.0.0.1:8081:80'
+    depends_on:
+      monitor:
+        condition: service_healthy
+    logging: *logging
+
+volumes:
+  exhibition_data:

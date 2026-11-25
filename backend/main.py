@@ -1,6 +1,7 @@
 from pathlib import Path
 from uuid import UUID
 import os
+import secrets
 import json
 import asyncio
 import struct
@@ -28,6 +29,8 @@ from monitor import Monitor, frame_payload
 from media_gateway import MediaGateway
 from video_upload import TestVideoUpload, CHUNK_BYTES, MAX_VIDEO_BYTES
 
+EXHIBITION = os.getenv('EXHIBITION_ENABLED', '').lower() == 'true'
+EXHIBITION_KEY = os.getenv('EXHIBITION_OPERATOR_KEY', '')
 LOCAL_DEMO = os.getenv('LOCAL_DEMO_ENABLED','').lower() == 'true'
 if LOCAL_DEMO:
     from local_demo import validate_configuration, current_user, monitor_user
@@ -35,17 +38,35 @@ if LOCAL_DEMO:
     validate_configuration()
 
 
+if EXHIBITION:
+    if LOCAL_DEMO or len(EXHIBITION_KEY) < 32:
+        raise RuntimeError('Exhibition requires its own runtime and an operator key of at least 32 characters.')
+
+    def monitor_user():
+        return None
+
+    def require_operator(request: Request):
+        supplied = request.headers.get('x-exhibition-key', '')
+        if not secrets.compare_digest(supplied.encode('utf-8'), EXHIBITION_KEY.encode('utf-8')):
+            raise HTTPException(403, '전시 운영 키를 확인하세요.')
+        return {'employee_id': 'exhibition-operator', 'role': 'admin'}
+else:
+    require_operator = monitor_user
+
+
 @asynccontextmanager
 async def lifespan(app):
     init_db()
-    init_identity()
+    if not EXHIBITION:
+        init_identity()
     global_tracker.initialize()
     await media_gateway.start()
     if os.getenv('REID_PRELOAD','false').lower() == 'true':
         await run_in_threadpool(global_tracker.encoder.encode,None,[])
     for source in monitors().values():
         source.initialize(retention_seconds())
-        if os.getenv('MONITOR_AUTOSTART', 'false').lower() == 'true' and source.source is not None and source.upload_path is None:
+        if (os.getenv('MONITOR_AUTOSTART', 'false').lower() == 'true'
+                and source.source is not None and (EXHIBITION or source.upload_path is None)):
             source.start()
     try:
         yield
@@ -56,14 +77,15 @@ async def lifespan(app):
 
 
 app = FastAPI(lifespan=lifespan)
-attach_identity(app,local_demo=LOCAL_DEMO)
+if not EXHIBITION:
+    attach_identity(app,local_demo=LOCAL_DEMO)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[os.getenv('PUBLIC_APP_URL', 'http://localhost:5173').rstrip('/')],
     allow_origin_regex=(r'http://(localhost|127\.0\.0\.1):' + str(urlsplit(os.getenv('PUBLIC_APP_URL','http://localhost:5173')).port)
                         if urlsplit(os.getenv('PUBLIC_APP_URL','http://localhost:5173')).hostname in ('localhost','127.0.0.1') else None),
     allow_credentials=True,
-    allow_methods=['GET', 'PATCH', 'POST', 'DELETE', 'OPTIONS'], allow_headers=['Content-Type'],
+    allow_methods=['GET', 'PATCH', 'POST', 'DELETE', 'OPTIONS'], allow_headers=['Content-Type', 'X-Exhibition-Key'],
 )
 
 # main.py와 같은 폴더에 있는 파일 사용
@@ -104,14 +126,26 @@ def make_monitor(config, root):
 monitor = make_monitor(configs[0], recording_root)
 monitor2 = make_monitor(configs[1], recording_root / 'CAM-02')
 monitor3 = make_monitor(configs[2], recording_root / 'CAM-03')
-monitor4 = Monitor(model, MODEL_PATH, None, recording_root / 'CAM-04', camera_name='CAM-04',
-                   camera_id='CAM-04', use_camera_env=False, engine=engine,
-                   upload_path=recording_root / 'CAM-04' / 'test-video.mp4')
-test_video_upload = TestVideoUpload(monitor4)
+live_monitors = {'CAM-01': monitor, 'CAM-02': monitor2, 'CAM-03': monitor3}
+if EXHIBITION:
+    for source in live_monitors.values():
+        if source.adapter == 'direct':
+            source.load_saved_source(recording_root / f'{source.camera_id}.json')
+
+test_monitors = {}
+test_video_uploads = {}
+for camera_id in ('CAM-04', 'CAM-05') if EXHIBITION else ('CAM-04',):
+    root = recording_root / camera_id
+    source = Monitor(model, MODEL_PATH, None, root, camera_name=camera_id,
+                     camera_id=camera_id, use_camera_env=False, engine=engine,
+                     upload_path=root / 'test-video.mp4', loop_upload=EXHIBITION)
+    test_monitors[camera_id] = source
+    test_video_uploads[camera_id] = TestVideoUpload(source)
+monitor4 = test_monitors['CAM-04']
 
 
 def monitors():
-    return {'CAM-01': monitor, 'CAM-02': monitor2, 'CAM-03': monitor3, 'CAM-04': monitor4}
+    return {**live_monitors, **test_monitors}
 
 
 def select_monitor(camera_id):
@@ -171,7 +205,7 @@ def event_snapshot(event_id: int):
     return FileResponse(path, media_type='image/jpeg')
 
 
-@app.patch('/api/events/{event_id}', dependencies=[Depends(monitor_user)])
+@app.patch('/api/events/{event_id}', dependencies=[Depends(require_operator)])
 def review(event_id: int):
     event = review_event(event_id)
     if event is None:
@@ -188,28 +222,68 @@ def status(camera_id: str = 'CAM-01'):
 
 @app.get('/api/cameras', dependencies=[Depends(monitor_user)])
 def cameras_status():
-    return {'cameras': [{**status(key),
-                         'duplicate_source': index < len(configs) and configs[index]['duplicate_source']}
-                        for index,key in enumerate(monitors())],
+    if EXHIBITION:
+        sources = [source.source for source in live_monitors.values()]
+        duplicates = {camera_id for camera_id, address in zip(live_monitors, sources)
+                      if address is not None and sources.count(address) > 1}
+    else:
+        duplicates = {config['camera_id'] for config in configs if config['duplicate_source']}
+    return {'cameras': [{**status(key), 'duplicate_source': key in duplicates} for key in monitors()],
             'reid_state':global_tracker.encoder.state,
             'service_metrics':{'cpu_percent':process_metrics.cpu_percent(),
                 'rss_bytes':process_metrics.memory_info().rss,
                 'disk_free_bytes':psutil.disk_usage(str(recording_root)).free}}
 
 
-@app.post('/api/cameras/CAM-04/upload')
-async def upload_test_video(request: Request, upload_id: UUID, offset: int = Query(ge=0),
-                            total: int = Query(gt=0, le=MAX_VIDEO_BYTES), user=Depends(monitor_user)):
+@app.post('/api/cameras/{camera_id}/upload')
+async def upload_test_video(camera_id: str, request: Request, upload_id: UUID, offset: int = Query(ge=0),
+                            total: int = Query(gt=0, le=MAX_VIDEO_BYTES), user=Depends(require_operator)):
+    upload = test_video_uploads.get(camera_id)
+    if upload is None:
+        raise HTTPException(404, '영상을 올릴 수 있는 채널이 아닙니다.')
     if request.headers.get('content-type') != 'application/octet-stream':
         raise HTTPException(415, '영상 업로드 형식이 올바르지 않습니다.')
-    if monitor4.status()['state'] in ('starting', 'running', 'stopping'):
-        raise HTTPException(409, 'CAM 4 감지 녹화를 종료한 후 업로드하세요.')
+    if upload.monitor.status()['state'] in ('starting', 'running', 'stopping'):
+        raise HTTPException(409, '테스트 감지 녹화를 종료한 후 업로드하세요.')
     data = bytearray()
     async for chunk in request.stream():
         if len(data) + len(chunk) > CHUNK_BYTES:
             raise HTTPException(413, '영상 조각이 너무 큽니다.')
         data.extend(chunk)
-    return await run_in_threadpool(test_video_upload.append, user['employee_id'], upload_id, offset, total, data)
+    result = await run_in_threadpool(upload.append, user['employee_id'], upload_id, offset, total, data)
+    if EXHIBITION and result['ready']:
+        upload.monitor.start()
+    return result
+
+
+if EXHIBITION:
+    class CameraRegistration(BaseModel):
+        url: str = Field(min_length=1, max_length=2048)
+
+
+    @app.post('/api/exhibition/operator', dependencies=[Depends(require_operator)])
+    def verify_operator():
+        return {'enabled': True}
+
+
+    @app.post('/api/cameras/{camera_id}/source', dependencies=[Depends(require_operator)])
+    def register_camera(camera_id: str, registration: CameraRegistration):
+        source = live_monitors.get(camera_id)
+        if source is None or source.adapter != 'direct':
+            raise HTTPException(404, '주소로 등록할 수 있는 채널이 아닙니다.')
+        address = registration.url.strip()
+        try:
+            parsed = urlsplit(address)
+            if (parsed.scheme not in ('http', 'https', 'rtsp', 'rtsps')
+                    or not parsed.hostname or parsed.fragment
+                    or any(character.isspace() for character in address)):
+                raise ValueError
+            _ = parsed.port
+        except ValueError:
+            raise HTTPException(422, 'HTTP(S) 또는 RTSP(S) 스트림 주소를 입력하세요.') from None
+        if not source.register_source(address):
+            raise HTTPException(409, '카메라 감지녹화를 완전히 중단한 뒤 등록하세요.')
+        return status(camera_id)
 
 
 @app.get('/health')
@@ -219,8 +293,8 @@ def health():
 
 @app.get('/api/runtime')
 def runtime_info():
-    return {'local_demo':LOCAL_DEMO,
-            'account_backend':'isolated-local-demo' if LOCAL_DEMO else 'postgresql',
+    return {'local_demo':LOCAL_DEMO, 'exhibition':EXHIBITION,
+            'account_backend':'disabled' if EXHIBITION else 'isolated-local-demo' if LOCAL_DEMO else 'postgresql',
             'yolo_state':'loaded' if model.loaded else 'not_loaded' if MODEL_PATH.is_file() else 'missing',
             'reid_state':global_tracker.encoder.state,'media_enabled':media_gateway.enabled}
 
@@ -248,7 +322,7 @@ async def whep_delete(key: str,request: Request):
     return Response(status_code=204)
 
 
-@app.post('/api/monitor/start', dependencies=[Depends(monitor_user)])
+@app.post('/api/monitor/start', dependencies=[Depends(require_operator)])
 def start_monitor(camera_id: str = 'CAM-01'):
     if camera_id == 'all':
         for source in monitors().values():
@@ -259,7 +333,7 @@ def start_monitor(camera_id: str = 'CAM-01'):
     return {**source.status(), 'camera_id': camera_id}
 
 
-@app.post('/api/monitor/stop', dependencies=[Depends(monitor_user)])
+@app.post('/api/monitor/stop', dependencies=[Depends(require_operator)])
 def stop_monitor(camera_id: str = 'CAM-01'):
     if camera_id == 'all':
         for source in monitors().values():
@@ -274,7 +348,7 @@ class RecordingSettings(BaseModel):
     retention_seconds: int = Field(ge=30, le=30 * 86400)
 
 
-@app.patch('/api/settings', dependencies=[Depends(monitor_user)])
+@app.patch('/api/settings', dependencies=[Depends(require_operator)])
 def settings(value: RecordingSettings):
     saved = retention_seconds(value.retention_seconds)
     for source in monitors().values():
@@ -304,7 +378,7 @@ class IdentityCorrection(BaseModel):
 
 
 @app.patch('/api/people/correction')
-def correct_identity(value: IdentityCorrection, user=Depends(monitor_user)):
+def correct_identity(value: IdentityCorrection, user=Depends(require_operator)):
     if user['role'] not in ('admin','system'):
         raise HTTPException(403,'관리자 권한이 필요합니다.')
     if len(value.reason.strip()) < 3:
@@ -322,9 +396,10 @@ async def live_frames(socket: WebSocket, camera_id: str):
         await socket.close(code=1008)
         return
     try:
-        user = await run_in_threadpool(current_user,socket)
-        if user['must_change_password']:
-            raise HTTPException(403)
+        if not EXHIBITION:
+            user = await run_in_threadpool(current_user,socket)
+            if user['must_change_password']:
+                raise HTTPException(403)
         source = select_monitor(camera_id)
     except Exception:
         await socket.close(code=1008)
@@ -333,7 +408,7 @@ async def live_frames(socket: WebSocket, camera_id: str):
     previous, checked = None, time.monotonic()
     try:
         while True:
-            if time.monotonic()-checked > 30:
+            if not EXHIBITION and time.monotonic()-checked > 30:
                 user = await run_in_threadpool(current_user,socket)
                 if user['must_change_password']:
                     break
