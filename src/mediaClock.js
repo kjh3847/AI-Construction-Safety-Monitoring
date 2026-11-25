@@ -13,4 +13,16 @@ export class MetadataBuffer {
     const entry=this.frames.get(timestamp>>>0);
     return entry && now-entry.arrival<=3000 ? entry.meta : null;
   }
+  recent(timestamp,now=performance.now()){
+    if(!Number.isInteger(timestamp))return null;
+    let closest=null, distance=27001;
+    for(const [key,entry] of this.frames){
+      const lag=(timestamp-key)>>>0;
+      if(lag<distance && now-entry.arrival<=700){
+        distance=lag;
+        closest=entry.meta;
+      }
+    }
+    return closest;
+  }
 }

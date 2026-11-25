@@ -80,7 +80,11 @@ class MediaGateway:
                 try:valid=lease['expires']>time.monotonic() and await asyncio.to_thread(self.session_valid,lease['owner'])
                 except Exception:valid=False
                 if not valid:await self.delete(key)
+            await self.maintain_publishers()
             await asyncio.sleep(2)
+
+    async def maintain_publishers(self):
+        pass
 
     def status(self,camera):
         return {**self.paths[camera],'available':self.available,'transport':'webrtc',

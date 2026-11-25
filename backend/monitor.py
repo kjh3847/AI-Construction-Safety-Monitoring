@@ -27,12 +27,15 @@ from frame_store import FrameStore
 
 class Monitor:
     def __init__(self, model, model_path, video_path, root, camera_name=None, use_camera_env=True,
-                 engine=None, global_tracker=None, camera_id=None, adapter='direct', upload_path=None, loop_upload=False):
+                 engine=None, global_tracker=None, camera_id=None, adapter='direct', upload_path=None, loop_upload=False,
+                 ephemeral=False, smooth_file=False):
         self.model = model
         self.adapter = adapter
         self.model_path = Path(model_path)
         source = os.getenv('CAMERA_SOURCE', '').strip() if use_camera_env else ''
         self.loop_upload = loop_upload
+        self.ephemeral = ephemeral
+        self.smooth_file = smooth_file
         self.source_config = None
         self.upload_path = Path(upload_path) if upload_path is not None else None
         existing_upload = self.upload_path if self.upload_path and self.upload_path.is_file() else None
@@ -44,6 +47,8 @@ class Monitor:
         self.engine = engine or FairInference(model)
         self.global_tracker = global_tracker
         self.source_name = self.video_path.name if self.video_path else '미설정' if self.source is None else '실제 카메라'
+        if self.smooth_file:
+            self.source_name = self.upload_path.name
         if self.adapter=='mediamtx':self.source_name='MediaMTX 스트림'
         capacity = int(os.getenv('RECORDING_MAX_BYTES_PER_CAMERA', '0')) or None
         self.store = FrameStore(Path(root) / 'frames', max_bytes=capacity)
@@ -103,6 +108,8 @@ class Monitor:
 
     def initialize(self, retention):
         self.store.retention = retention
+        if self.ephemeral:
+            return
         # Backfill only exact retained source frames, never today's live count.
         with get_connection() as conn:
             rows = conn.execute('SELECT event_key,event_type,recording_id,frame_id FROM safety_events WHERE event_person_count IS NULL AND recording_id IS NOT NULL').fetchall()
@@ -131,15 +138,17 @@ class Monitor:
 
     def start(self):
         with self.lock:
+            if self.thread and self.thread.is_alive():
+                return
+            if self.smooth_file:
+                self.source = str(self.upload_path) if self.upload_path.is_file() else None
             if self.source is None:
                 self.state,self.error = 'idle',None
-                return
-            if self.thread and self.thread.is_alive():
                 return
             self.stop_event.clear()
             self.state, self.error, self.updated_at = 'starting', None, None
             self.recording_id = uuid.uuid4().hex
-            if self.upload_path:
+            if self.upload_path or self.ephemeral:
                 self.latest = None
             self.thread = Thread(target=self._run, daemon=True)
             self.thread.start()
@@ -162,10 +171,18 @@ class Monitor:
         with self.lock:
             stale = self.state == 'running' and self.updated_at and time.time() - self.updated_at > 10
             current = self.latest[0] if self.latest and self.state == 'running' and not stale else None
-            return {'state': 'unconfigured' if self.source is None else 'disconnected' if stale else self.state, 'error': self.error,
+            fingerprint = None
+            if self.smooth_file:
+                try:
+                    fingerprint = str(self.upload_path.stat().st_mtime_ns)
+                except FileNotFoundError:
+                    pass
+            configured = bool(fingerprint) if self.smooth_file else self.source is not None
+            return {'state': 'unconfigured' if not configured else 'disconnected' if stale else self.state, 'error': self.error,
                     'updated_at': self.updated_at, 'camera_name': self.camera_name,
                     'source_name': self.source_name, 'source_kind': self.source_kind,
-                    'source_type': self.source_type, 'configured': self.source is not None,
+                    'source_type': 'file' if self.smooth_file and configured else self.source_type, 'configured': configured,
+                    'video_version': fingerprint,
                     'input_adapter':self.adapter,'live_transport':'webrtc' if self.adapter=='mediamtx' else 'binary',
                     'metrics': {**self.metrics, **(self.capture.stats() if self.capture else {})},
                     'storage_error': self.storage_error,
@@ -234,8 +251,10 @@ class Monitor:
             origin = time.monotonic()
             local_tracker = LocalBoTSORT()
             loop_start_frame = 0
-            self.writer = Thread(target=self._write_loop, daemon=True, name=f'{self.camera_id}-recording')
-            self.writer.start()
+            file_started = origin
+            if not self.ephemeral:
+                self.writer = Thread(target=self._write_loop, daemon=True, name=f'{self.camera_id}-recording')
+                self.writer.start()
             analysis_interval = 1/max(.1,float(os.getenv('ANALYSIS_FPS', '5')))
             recording_interval = 1/max(.1,float(os.getenv('RECORDING_FPS', '2')))
             file_stride = max(1, round(fps * analysis_interval)) if self.upload_path else 1
@@ -252,6 +271,7 @@ class Monitor:
                     success, frame = cap.read()
                     captured = time.time()
                     loop_start_frame = frame_id
+                    file_started = started
                     local_tracker = LocalBoTSORT()
                     recorder.tracker.tracks.clear()
                 if not success:
@@ -303,15 +323,18 @@ class Monitor:
                     detection = detections[person['detection_index']]
                     person.update(bbox=detection['bbox'], local_track_id=detection['track_id'],
                                   **identities.get(str(detection['track_id']), {}))
-                recorder.record(detections, source_frame, video_seconds,
-                    datetime.fromtimestamp(captured, timezone.utc).isoformat(timespec='milliseconds').replace('+00:00', 'Z'),
-                    tracks=tracks, identities=identities)
-                # Encode the original pixels once. Labels are synchronized metadata.
                 encode_started = time.perf_counter()
-                ok, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
-                if not ok:
-                    raise RuntimeError('녹화 프레임 인코딩 실패')
-                jpeg = buffer.tobytes()
+                jpeg = b''
+                if not self.ephemeral:
+                    recorder.record(detections, source_frame, video_seconds,
+                        datetime.fromtimestamp(captured, timezone.utc).isoformat(timespec='milliseconds').replace('+00:00', 'Z'),
+                        tracks=tracks, identities=identities)
+                    # Archival frames are independent from live WebRTC/MP4 playback.
+                    if not self.smooth_file or captured - last_saved >= recording_interval or recorder.episode_keys:
+                        ok, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 75 if self.smooth_file else 80])
+                        if not ok:
+                            raise RuntimeError('녹화 프레임 인코딩 실패')
+                        jpeg = buffer.tobytes()
                 meta = {'recording_id': self.recording_id, 'frame_id': frame_id,
                     'timestamp': captured, 'captured_at': datetime.fromtimestamp(captured, timezone.utc).isoformat(),
                     'timestamp_basis':'server-receive' if self.source_kind!='test' else 'test-playback',
@@ -326,7 +349,7 @@ class Monitor:
                     'negative_detection_count': sum(d['class_name'] in ('NO-Hardhat', 'NO-Safety Vest') for d in detections)}
                 with self.lock:
                     self.latest = meta, jpeg
-                if captured - last_saved >= recording_interval or recorder.episode_keys:
+                if jpeg and (captured - last_saved >= recording_interval or recorder.episode_keys):
                     try:
                         self.writer_queue.put_nowait((meta, jpeg, list(recorder.episode_keys)))
                     except Full:
@@ -343,12 +366,18 @@ class Monitor:
                     self.state, self.updated_at, self.error = 'running', captured, None
                 frame_id += 1
                 if self.source_kind == 'test':
-                    for _ in range(file_stride - 1):
-                        if self.stop_event.is_set() or not cap.grab():
-                            break
+                    elapsed = time.monotonic() - file_started
+                    target = frame_id + file_stride - 1
+                    if self.smooth_file:
+                        target = max(target, loop_start_frame + int(elapsed * fps))
+                    while frame_id < target and not self.stop_event.is_set() and cap.grab():
                         frame_id += 1
-                    self.stop_event.wait(max(0, frame_id / fps - (time.monotonic() - origin))
-                                         if self.upload_path else max(0, 1 / fps - (time.monotonic() - started)))
+                    if self.smooth_file:
+                        self.stop_event.wait(max(0, (frame_id - loop_start_frame) / fps - elapsed))
+                    elif self.upload_path:
+                        self.stop_event.wait(max(0, frame_id / fps - (time.monotonic() - origin)))
+                    else:
+                        self.stop_event.wait(max(0, 1 / fps - (time.monotonic() - started)))
                 else:
                     self.stop_event.wait(max(0,analysis_interval-elapsed))
         except Exception as exc:
@@ -371,6 +400,8 @@ class Monitor:
                 self.writer_queue.put(None)
                 self.writer.join(timeout=10)
             with self.lock:
+                if self.ephemeral:
+                    self.latest, self.updated_at = None, None
                 if self.stop_event.is_set():
                     self.state = 'stopped'
                 elif finished_upload:

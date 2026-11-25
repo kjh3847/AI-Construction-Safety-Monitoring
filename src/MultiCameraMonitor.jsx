@@ -1,6 +1,8 @@
 import React, {useEffect, useRef, useState} from 'react';
 import MonitorPlayer, {stateLabel} from './MonitorPlayer';
-import {accountRequest} from './api';
+import {API_BASE, accountRequest} from './api';
+import ExhibitionVideo from './ExhibitionVideo';
+import WebRTCLive from './WebRTCLive';
 
 function CameraTile({camera, status, connection, jump, onFrame, onStatus, exhibition, canOperate}) {
   const shell = useRef(null);
@@ -11,7 +13,10 @@ function CameraTile({camera, status, connection, jump, onFrame, onStatus, exhibi
   const [expanded,setExpanded] = useState(false);
   const [fullscreen,setFullscreen] = useState(false);
   const testCamera = camera.input === 'video';
-  const canRegister = exhibition && canOperate && !testCamera && status?.input_adapter === 'direct';
+  const visitor = camera.input === 'visitor';
+  const s3 = camera.input === 's3';
+  const [past, setPast] = useState(null);
+  const canRegister = exhibition && canOperate && !testCamera && !visitor && !s3 && status?.input_adapter === 'direct';
 
   async function register(event) {
     event.preventDefault();
@@ -36,7 +41,15 @@ function CameraTile({camera, status, connection, jump, onFrame, onStatus, exhibi
     document.addEventListener('fullscreenchange',sync);
     return () => document.removeEventListener('fullscreenchange',sync);
   },[]);
-  useEffect(() => { if (jump) shell.current?.scrollIntoView({behavior:'smooth',block:'center'}); },[jump]);
+  useEffect(() => {
+    if (jump) {
+      if (s3) setPast(jump);
+      shell.current?.scrollIntoView({behavior:'smooth',block:'center'});
+    }
+  }, [jump, s3]);
+  useEffect(() => {
+    if (visitor && !status?.relay?.online) onFrame(camera.id, null);
+  }, [visitor, status?.relay?.online, camera.id]);
   async function control(action) {
     setBusy(true);
     try { onStatus(await accountRequest(`/api/monitor/${action}?camera_id=${camera.id}`,{method:'POST'})); setMessage(''); }
@@ -74,14 +87,29 @@ function CameraTile({camera, status, connection, jump, onFrame, onStatus, exhibi
     } catch { setMessage('전체화면을 열 수 없습니다.'); }
   }
   return <section className={`panel camera-tile ${expanded ? 'tile-expanded' : ''}`} data-camera-id={camera.id}>
-    <div className="section-title"><h2>{camera.id}{testCamera ? (exhibition ? ' · ' + camera.name : ' · 테스트 영상') : status?.camera_name && status.camera_name !== camera.id ? ` · ${status.camera_name}` : ''}</h2>
+    <div className="section-title"><h2>{camera.id}{visitor || s3 ? ' · ' + camera.name : testCamera ? (exhibition ? ' · ' + camera.name : ' · 테스트 영상') : status?.camera_name && status.camera_name !== camera.id ? ` · ${status.camera_name}` : ''}</h2>
       <span className={status?.state === 'running' ? 'signal-good' : 'signal-caution'}>{connection === 'ready' ? stateLabel[status?.state] : '서버 연결 중'}</span></div>
     <div className="player-shell" ref={shell}>
-      <MonitorPlayer cameraId={camera.id} status={status} connection={connection} enabled={Boolean(status?.configured)}
-        onFrame={frame => onFrame(camera.id,frame)} jump={jump} expanded={expanded} onExpand={() => setExpanded(v=>!v)}
-        onFullscreen={toggleFullscreen} isFullscreen={fullscreen}/>
+      {visitor ? <div className="dvr-picture">
+        {status?.relay?.online && status?.relay?.reserved
+          ? <WebRTCLive cameraId={camera.id} status={status} visitor paused={false} onFrame={frame => onFrame(camera.id, frame)}/>
+          : <div className="empty-feed exhibition-qr">
+            {status?.relay?.reserved ? <p>휴대폰 연결 중</p> : <>
+              <a href={API_BASE + '/join/' + camera.id} aria-label={camera.id + ' 휴대폰 카메라 체험'}>
+                <img src={API_BASE + '/api/exhibition/qr/' + camera.id} alt={camera.id + ' 체험 QR'}/>
+              </a>
+              <p>{status?.relay?.available ? '휴대폰으로 QR을 스캔하세요' : '카메라 중계 서버 준비 중'}</p>
+            </>}
+          </div>}
+      </div> : s3 && !past
+        ? <ExhibitionVideo camera={camera} status={status} onFrame={frame => onFrame(camera.id, frame)}/>
+        : <MonitorPlayer cameraId={camera.id} status={status} connection={connection} enabled={Boolean(status?.configured)}
+        onFrame={frame => onFrame(camera.id,frame)} jump={s3 ? past : jump} expanded={expanded} onExpand={() => setExpanded(v=>!v)}
+        onFullscreen={toggleFullscreen} isFullscreen={fullscreen}/>}
     </div>
-    {canOperate && <div className="feed-footer">
+    {s3 && past && <button onClick={() => setPast(null)}>시연 화면으로 돌아가기</button>}
+    {(visitor || s3) && <button onClick={toggleFullscreen} disabled={visitor && !status?.relay?.online}>{fullscreen ? '전체화면 종료' : '전체화면'}</button>}
+    {canOperate && !visitor && <div className="feed-footer">
       <button className="primary" disabled={busy || progress !== null || !status?.configured || recording} onClick={()=>control('start')}>감지·녹화 시작</button>
       <button className="danger-button" disabled={busy || !['running','starting','reconnecting','disconnected'].includes(status?.state)} onClick={()=>control('stop')}>중단</button>
       {testCamera && <>
@@ -107,7 +135,7 @@ function CameraTile({camera, status, connection, jump, onFrame, onStatus, exhibi
   </section>;
 }
 
-export default function MultiCameraMonitor({jump, onTotals, cameras, exhibition, canOperate}) {
+export default function MultiCameraMonitor({jump, onTotals, cameras, exhibition, interactive, canOperate}) {
   const cameraStrip = useRef(null);
   const [statuses,setStatuses] = useState({});
   const [connection,setConnection] = useState('loading');
@@ -144,8 +172,8 @@ export default function MultiCameraMonitor({jump, onTotals, cameras, exhibition,
     if (tile) strip.scrollBy({left: tile.getBoundingClientRect().left - strip.getBoundingClientRect().left, behavior});
   }
   useEffect(() => {
-    if (exhibition && !jump) showCamera('CAM-04', 'instant');
-  }, [exhibition, jump]);
+    if (exhibition && !jump) showCamera(interactive ? 'CAM-01' : 'CAM-04', 'instant');
+  }, [exhibition, interactive, jump]);
   function publishTotals() {
     const live = Object.values(frames.current).filter(f => f && !f.paused && f.mode === 'live'
       && statusesRef.current[f.camera_id]?.state === 'running' && Date.now()/1000-f.timestamp < 10);
@@ -182,7 +210,7 @@ export default function MultiCameraMonitor({jump, onTotals, cameras, exhibition,
       </div></div>
     {service && canOperate && <p className="small-note">서버 CPU {service.cpu_percent.toFixed(1)}% · 메모리 {(service.rss_bytes/1024**2).toFixed(0)} MiB · 디스크 여유 {(service.disk_free_bytes/1024**3).toFixed(1)} GiB</p>}
     {message && <p role="status">{message}</p>}
-    <div className="multi-camera-grid" data-exhibition={exhibition || undefined} ref={cameraStrip} aria-label="카메라 가로 목록" tabIndex={0}>{cameras.map(camera => <CameraTile key={camera.id} camera={camera}
+    <div className="multi-camera-grid" data-exhibition={exhibition || undefined} data-interactive={interactive || undefined} ref={cameraStrip} aria-label="카메라 가로 목록" tabIndex={0}>{cameras.map(camera => <CameraTile key={camera.id} camera={camera}
       exhibition={exhibition} canOperate={canOperate} status={statuses[camera.id]} connection={connection} onFrame={receiveFrame}
       onStatus={status=>setStatuses(previous=>({...previous,[status.camera_id]:status}))}
       jump={jump?.cameraId === camera.id ? jump : null}/>)}</div>

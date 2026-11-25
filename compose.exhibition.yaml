@@ -1,4 +1,4 @@
-name: safety-exhibition
+name: safety-exhibition-qr-s3
 services:
   monitor:
     build:
@@ -9,6 +9,22 @@ services:
     stop_grace_period: 45s
     environment:
       EXHIBITION_ENABLED: 'true'
+      EXHIBITION_INTERACTIVE: 'true'
+      EXHIBITION_VIDEO_DIR: /exhibition-videos
+      MEDIA_ENABLED: 'true'
+      MEDIA_RTSP_URL: rtsp://relay:8554
+      MEDIA_API_URL: http://relay:9997
+      MEDIA_WEBRTC_URL: http://relay:8889
+      MEDIA_AI_USER: exhibition_gateway
+      MEDIA_WEB_USER: exhibition_gateway
+      MEDIA_CONTROL_USER: exhibition_gateway
+      MEDIA_AI_PASSWORD: ${EXHIBITION_RELAY_KEY:?Set EXHIBITION_RELAY_KEY}
+      MEDIA_WEB_PASSWORD: ${EXHIBITION_RELAY_KEY:?Set EXHIBITION_RELAY_KEY}
+      MEDIA_CONTROL_PASSWORD: ${EXHIBITION_RELAY_KEY:?Set EXHIBITION_RELAY_KEY}
+      CAMERA_RECONNECT_INTERVAL: '1'
+      OMP_NUM_THREADS: '2'
+      MKL_NUM_THREADS: '2'
+      INFERENCE_SIZE: ${EXHIBITION_INFERENCE_SIZE:-512}
       EXHIBITION_OPERATOR_KEY: ${EXHIBITION_OPERATOR_KEY:?Set EXHIBITION_OPERATOR_KEY}
       PUBLIC_APP_URL: ${PUBLIC_APP_URL:?Set PUBLIC_APP_URL to the HTTPS origin}
       MONITOR_AUTOSTART: 'true'
@@ -20,7 +36,10 @@ services:
       ANALYSIS_FPS: ${EXHIBITION_ANALYSIS_FPS:-5}
     volumes:
       - exhibition_data:/data
+      - ./exhibition-videos:/exhibition-videos:ro
       - ${EXHIBITION_MODEL_FILE:?Set EXHIBITION_MODEL_FILE}:/models/best.pt:ro
+    depends_on:
+      - relay
     healthcheck:
       test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8002/health',timeout=3)"]
       interval: 10s
@@ -31,6 +50,18 @@ services:
       options:
         max-size: 10m
         max-file: '3'
+  relay:
+    image: bluenviron/mediamtx:1.21.3
+    restart: unless-stopped
+    environment:
+      MTX_AUTHINTERNALUSERS_0_PASS: ${EXHIBITION_RELAY_KEY:?Set EXHIBITION_RELAY_KEY}
+      MTX_WEBRTCADDITIONALHOSTS: ${EXHIBITION_STREAM_HOST:?Set EXHIBITION_STREAM_HOST}
+    volumes:
+      - ./deploy/mediamtx.exhibition.yml:/mediamtx.yml:ro
+    ports:
+      - '8190:8190/udp'
+      - '8190:8190/tcp'
+    logging: *logging
   web:
     build:
       context: .
@@ -39,7 +70,7 @@ services:
         WEB_BASE_PATH: /exhibition/
     restart: unless-stopped
     ports:
-      - '127.0.0.1:8081:80'
+      - '127.0.0.1:8082:80'
     depends_on:
       monitor:
         condition: service_healthy

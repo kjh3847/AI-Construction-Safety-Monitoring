@@ -3,13 +3,17 @@ import {API_BASE,accountRequest} from './api';
 import {MetadataBuffer} from './mediaClock';
 import {drawEquipmentBoxes, textLabels} from './frameProtocol';
 
-export default function WebRTCLive({cameraId,status,paused,onFrame}){
+export default function WebRTCLive({cameraId,status,paused,onFrame,visitor=false}){
   const video=useRef(null),canvas=useRef(null),callback=useRef(onFrame),pauseRef=useRef(paused);
   callback.current=onFrame;pauseRef.current=paused;
   const [message,setMessage]=useState('송출 대기'),[fps,setFps]=useState(0),[analysis,setAnalysis]=useState(null);
   const [aligned,setAligned]=useState(false),[latency,setLatency]=useState(null);
   useEffect(()=>{if(video.current){if(paused)video.current.pause();else video.current.play().catch(()=>{});}},[paused]);
   useEffect(()=>{
+    if(visitor && !document.cookie.includes('exhibition_viewer=') && crypto.randomUUID){
+      const secure=window.location.protocol==='https:'?'; Secure':'';
+      document.cookie='exhibition_viewer='+crypto.randomUUID()+'; Path=/; SameSite=Strict'+secure;
+    }
     let active=true,pc=null,socket=null,resource=null,retry=null,heartbeat=null,metadataRetry=null,frameCallback=null;
     let received=0,clock=performance.now(),buffer=new MetadataBuffer(cameraId),alignedFrames=0;
     let attempt=0,offerAbort=null,connectionDeadline=null,lastMetadata=0,lastRendered=performance.now();
@@ -22,8 +26,11 @@ export default function WebRTCLive({cameraId,status,paused,onFrame}){
         received++;
         lastRendered=now;
         if(now-clock>=1000){setFps(received*1000/(now-clock));received=0;clock=now;}
-        overlay.width=element.videoWidth;overlay.height=element.videoHeight;
-        const meta=buffer.exact(frame.rtpTimestamp);
+        if(overlay.width!==element.videoWidth || overlay.height!==element.videoHeight){
+          overlay.width=element.videoWidth;overlay.height=element.videoHeight;
+        }
+        context.clearRect(0,0,overlay.width,overlay.height);
+        const meta=visitor ? buffer.recent(frame.rtpTimestamp,now) : buffer.exact(frame.rtpTimestamp);
         if(meta){
           alignedFrames++;setAligned(true);
           context.save();context.scale(element.videoWidth/meta.width,element.videoHeight/meta.height);
@@ -33,7 +40,7 @@ export default function WebRTCLive({cameraId,status,paused,onFrame}){
           for(const label of textLabels(meta,meta.width,meta.height,text=>context.measureText(text).width)){
             context.fillStyle=label.danger?'#ff8585':'#8aefc1';context.strokeText(label.text,label.x,label.y,meta.width);context.fillText(label.text,label.x,label.y,meta.width);
           }
-          context.restore();callback.current?.({...meta,mode:'live',paused:false,alignment:'exact-rtp'});
+          context.restore();callback.current?.({...meta,mode:'live',paused:false,alignment:visitor?'recent-rtp':'exact-rtp'});
         }
         element.dataset.rtpTimestamp=String(frame.rtpTimestamp??'');element.dataset.alignedFrames=String(alignedFrames);
       }
@@ -103,7 +110,7 @@ export default function WebRTCLive({cameraId,status,paused,onFrame}){
       if(performance.now()-lastRendered>2000)setFps(0);
     },1000);
     return()=>{active=false;clearInterval(freshness);clearTimeout(retry);clearTimeout(metadataRetry);socket?.close(1000);cleanupConnection();element.srcObject=null;};
-  },[cameraId,status?.relay?.online,status?.relay?.ready_time]);
+  },[cameraId,status?.relay?.online,status?.relay?.ready_time,visitor]);
   return <>
     <video ref={video} className="webrtc-video" autoPlay muted playsInline aria-label={`${cameraId} WebRTC 실시간 영상`}/>
     <canvas ref={canvas} className="webrtc-overlay" aria-label="동일 RTP 프레임의 텍스트 분석 결과"/>

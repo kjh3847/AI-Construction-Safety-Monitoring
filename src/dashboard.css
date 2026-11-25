@@ -108,3 +108,17 @@
 @media(min-width:701px){
   .cctv .multi-camera-grid[data-exhibition]{--camera-width:calc((100% - 12px) / 2);--camera-span:2}
 }
+
+.cctv .exhibition-qr{gap:.35rem;padding:.35rem}
+.cctv .exhibition-qr img{display:block;width:clamp(74px,14vw,150px);max-width:100%;object-fit:contain;border-radius:4px}
+.cctv .exhibition-qr p{margin:0;font-size:.85rem;text-align:center}
+.cctv .exhibition-demo-video [hidden]{display:none}
+.exhibition-join{max-width:520px;margin:0 auto;padding:28px 18px;color:#162523}
+.exhibition-join video{display:block;width:100%;max-height:55vh;object-fit:contain;background:#07101e;margin:14px 0;border-radius:8px}
+.exhibition-join video[hidden]{display:none}
+.exhibition-join button{display:block;padding:12px 18px;font-size:1rem;border:1px solid #17352a;border-radius:6px;background:#17352a;color:white;cursor:pointer}
+.exhibition-join .danger-button{border-color:#a02323;background:#a02323}
+
+@media(min-width:1120px){
+  .cctv .multi-camera-grid[data-interactive]{--camera-width:calc((100% - 24px) / 3);--camera-span:3}
+}

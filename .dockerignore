@@ -11,3 +11,5 @@ artifacts
 backend/*.db*
 backend/recordings
 **/__pycache__
+
+exhibition-videos/

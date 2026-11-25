@@ -1,4 +1,5 @@
 from pathlib import Path
+from functools import lru_cache
 from uuid import UUID
 import os
 import secrets
@@ -27,9 +28,11 @@ from database import (init_db, get_events, event_summary, review_event, get_even
                       today_event_count, retention_seconds)
 from monitor import Monitor, frame_payload
 from media_gateway import MediaGateway
+from exhibition_relay import ExhibitionRelay
 from video_upload import TestVideoUpload, CHUNK_BYTES, MAX_VIDEO_BYTES
 
 EXHIBITION = os.getenv('EXHIBITION_ENABLED', '').lower() == 'true'
+INTERACTIVE = EXHIBITION and os.getenv('EXHIBITION_INTERACTIVE', '').lower() == 'true'
 EXHIBITION_KEY = os.getenv('EXHIBITION_OPERATOR_KEY', '')
 LOCAL_DEMO = os.getenv('LOCAL_DEMO_ENABLED','').lower() == 'true'
 if LOCAL_DEMO:
@@ -65,6 +68,8 @@ async def lifespan(app):
         await run_in_threadpool(global_tracker.encoder.encode,None,[])
     for source in monitors().values():
         source.initialize(retention_seconds())
+        if source.ephemeral or source.camera_id in s3_monitors:
+            continue
         if (os.getenv('MONITOR_AUTOSTART', 'false').lower() == 'true'
                 and source.source is not None and (EXHIBITION or source.upload_path is None)):
             source.start()
@@ -113,39 +118,59 @@ model = LazyYOLO(MODEL_PATH)
 engine = FairInference(model)
 global_tracker = GlobalTracker()
 configs = camera_configs(BASE_DIR)
-media_gateway = MediaGateway()
+media_gateway = ExhibitionRelay() if INTERACTIVE else MediaGateway()
 process_metrics = psutil.Process()
 
 recording_root = Path(os.getenv('MONITOR_STORAGE_DIR') or BASE_DIR / 'recordings')
 def make_monitor(config, root):
     return Monitor(model, MODEL_PATH, config['source'], root, camera_name=config['name'],
-        camera_id=config['camera_id'], use_camera_env=False, engine=engine, global_tracker=global_tracker,
-        adapter=config.get('adapter','direct'))
+        camera_id=config['camera_id'], use_camera_env=False, engine=engine,
+        global_tracker=None if INTERACTIVE else global_tracker, adapter=config.get('adapter','direct'),
+        ephemeral=INTERACTIVE)
 
 
 monitor = make_monitor(configs[0], recording_root)
 monitor2 = make_monitor(configs[1], recording_root / 'CAM-02')
 monitor3 = make_monitor(configs[2], recording_root / 'CAM-03')
 live_monitors = {'CAM-01': monitor, 'CAM-02': monitor2, 'CAM-03': monitor3}
-if EXHIBITION:
+if INTERACTIVE:
+    def set_live_camera(camera, online):
+        source = live_monitors[camera]
+        if online:
+            source.start()
+        elif not source.stop_event.is_set():
+            source.stop()
+
+    media_gateway.on_live = set_live_camera
+if EXHIBITION and not INTERACTIVE:
     for source in live_monitors.values():
         if source.adapter == 'direct':
             source.load_saved_source(recording_root / f'{source.camera_id}.json')
 
 test_monitors = {}
 test_video_uploads = {}
-for camera_id in ('CAM-04', 'CAM-05') if EXHIBITION else ('CAM-04',):
+upload_channels = () if INTERACTIVE else ('CAM-04', 'CAM-05') if EXHIBITION else ('CAM-04',)
+for camera_id in upload_channels:
     root = recording_root / camera_id
     source = Monitor(model, MODEL_PATH, None, root, camera_name=camera_id,
                      camera_id=camera_id, use_camera_env=False, engine=engine,
                      upload_path=root / 'test-video.mp4', loop_upload=EXHIBITION)
     test_monitors[camera_id] = source
     test_video_uploads[camera_id] = TestVideoUpload(source)
-monitor4 = test_monitors['CAM-04']
+s3_monitors = {}
+if INTERACTIVE:
+    for camera_id, label, filename in (
+            ('CAM-04', '건설장비 착용', '착용.mp4'), ('CAM-05', '건설장비 미착용', '미착용.mp4')):
+        s3_monitors[camera_id] = Monitor(model, MODEL_PATH, None, recording_root / camera_id,
+            camera_name=label, camera_id=camera_id, use_camera_env=False, engine=engine,
+            upload_path=Path(os.getenv('EXHIBITION_VIDEO_DIR', '/exhibition-videos')) / filename,
+            loop_upload=True, smooth_file=True)
+
+monitor4 = (s3_monitors if INTERACTIVE else test_monitors)['CAM-04']
 
 
 def monitors():
-    return {**live_monitors, **test_monitors}
+    return {**live_monitors, **test_monitors, **s3_monitors}
 
 
 def select_monitor(camera_id):
@@ -222,7 +247,7 @@ def status(camera_id: str = 'CAM-01'):
 
 @app.get('/api/cameras', dependencies=[Depends(monitor_user)])
 def cameras_status():
-    if EXHIBITION:
+    if EXHIBITION and not INTERACTIVE:
         sources = [source.source for source in live_monitors.values()]
         duplicates = {camera_id for camera_id, address in zip(live_monitors, sources)
                       if address is not None and sources.count(address) > 1}
@@ -268,6 +293,8 @@ if EXHIBITION:
 
     @app.post('/api/cameras/{camera_id}/source', dependencies=[Depends(require_operator)])
     def register_camera(camera_id: str, registration: CameraRegistration):
+        if INTERACTIVE:
+            raise HTTPException(404, '전시 체험 카메라는 QR로 연결합니다.')
         source = live_monitors.get(camera_id)
         if source is None or source.adapter != 'direct':
             raise HTTPException(404, '주소로 등록할 수 있는 채널이 아닙니다.')
@@ -286,6 +313,71 @@ if EXHIBITION:
         return status(camera_id)
 
 
+if INTERACTIVE:
+    def publish_origin(request):
+        if not origin_allowed(request.headers.get('origin', ''), os.getenv('PUBLIC_APP_URL', '')):
+            raise HTTPException(403, '전시 페이지에서 카메라를 연결하세요.')
+
+
+    @lru_cache(maxsize=3)
+    def qr_image(url):
+        import cv2
+        matrix = cv2.QRCodeEncoder_create().encode(url)
+        bordered = cv2.copyMakeBorder(matrix, 4, 4, 4, 4, cv2.BORDER_CONSTANT, value=255)
+        enlarged = cv2.resize(bordered, None, fx=6, fy=6, interpolation=cv2.INTER_NEAREST)
+        success, image = cv2.imencode('.png', enlarged)
+        if not success:
+            raise RuntimeError('Could not render QR code')
+        return image.tobytes()
+
+
+    @app.get('/api/exhibition/qr/{camera_id}')
+    def camera_qr(camera_id: str):
+        if camera_id not in live_monitors:
+            raise HTTPException(404)
+        base = os.getenv('PUBLIC_APP_URL', '').rstrip('/')
+        return Response(qr_image(f'{base}/exhibition/join/{camera_id}'), media_type='image/png',
+                        headers={'Cache-Control': 'private, max-age=300'})
+
+
+    @app.post('/api/exhibition/publish/{camera_id}')
+    async def publish_camera(camera_id: str, request: Request):
+        publish_origin(request)
+        if request.headers.get('content-type', '').split(';')[0] != 'application/sdp':
+            raise HTTPException(415, '카메라 연결 데이터 형식이 올바르지 않습니다.')
+        offer = bytearray()
+        async for chunk in request.stream():
+            if len(offer) + len(chunk) > 128 * 1024:
+                raise HTTPException(413, '카메라 연결 데이터가 너무 큽니다.')
+            offer.extend(chunk)
+        token, answer = await media_gateway.publish(camera_id, bytes(offer))
+        return Response(answer, status_code=201, media_type='application/sdp', headers={
+            'Cache-Control': 'no-store', 'Location': f'/api/exhibition/publish/{camera_id}/{token}'})
+
+
+    @app.post('/api/exhibition/publish/{camera_id}/{token}', status_code=204)
+    async def keep_camera(camera_id: str, token: str, request: Request):
+        publish_origin(request)
+        media_gateway.refresh_publisher(camera_id, token)
+        return Response(status_code=204)
+
+
+    @app.delete('/api/exhibition/publish/{camera_id}/{token}', status_code=204)
+    async def end_camera(camera_id: str, token: str, request: Request):
+        publish_origin(request)
+        await media_gateway.stop_publisher(camera_id, token)
+        return Response(status_code=204)
+
+
+    @app.api_route('/api/exhibition/video/{camera_id}', methods=['GET', 'HEAD'])
+    def exhibition_video(camera_id: str):
+        source = s3_monitors.get(camera_id)
+        if not source or not source.upload_path.is_file():
+            raise HTTPException(404, '시연 영상이 아직 준비되지 않았습니다.')
+        return FileResponse(source.upload_path, media_type='video/mp4',
+                            headers={'Cache-Control': 'private, max-age=300'})
+
+
 @app.get('/health')
 def health():
     return {'status':'ok'}
@@ -293,7 +385,7 @@ def health():
 
 @app.get('/api/runtime')
 def runtime_info():
-    return {'local_demo':LOCAL_DEMO, 'exhibition':EXHIBITION,
+    return {'local_demo':LOCAL_DEMO, 'exhibition':EXHIBITION, 'interactive':INTERACTIVE,
             'account_backend':'disabled' if EXHIBITION else 'isolated-local-demo' if LOCAL_DEMO else 'postgresql',
             'yolo_state':'loaded' if model.loaded else 'not_loaded' if MODEL_PATH.is_file() else 'missing',
             'reid_state':global_tracker.encoder.state,'media_enabled':media_gateway.enabled}
@@ -326,22 +418,30 @@ async def whep_delete(key: str,request: Request):
 def start_monitor(camera_id: str = 'CAM-01'):
     if camera_id == 'all':
         for source in monitors().values():
-            source.start()
+            if not source.ephemeral:
+                source.start()
         return cameras_status()
     source = select_monitor(camera_id)
+    if source.ephemeral:
+        raise HTTPException(409, '이 채널은 휴대폰 연결 시 자동으로 시작합니다.')
+    if camera_id in s3_monitors and not source.status()['configured']:
+        raise HTTPException(409, 'S3 시연 영상이 아직 준비되지 않았습니다.')
     source.start()
-    return {**source.status(), 'camera_id': camera_id}
+    return status(camera_id)
 
 
 @app.post('/api/monitor/stop', dependencies=[Depends(require_operator)])
 def stop_monitor(camera_id: str = 'CAM-01'):
     if camera_id == 'all':
         for source in monitors().values():
-            source.stop()
+            if not source.ephemeral:
+                source.stop()
         return cameras_status()
     source = select_monitor(camera_id)
+    if source.ephemeral:
+        raise HTTPException(409, '이 채널은 휴대폰에서 종료합니다.')
     source.stop()
-    return {**source.status(), 'camera_id': camera_id}
+    return status(camera_id)
 
 
 class RecordingSettings(BaseModel):
@@ -401,6 +501,8 @@ async def live_frames(socket: WebSocket, camera_id: str):
             if user['must_change_password']:
                 raise HTTPException(403)
         source = select_monitor(camera_id)
+        if source.ephemeral and not socket.url.path.startswith('/api/metadata/'):
+            raise HTTPException(404)
     except Exception:
         await socket.close(code=1008)
         return
@@ -421,7 +523,7 @@ async def live_frames(socket: WebSocket, camera_id: str):
                     header = json.dumps(meta,separators=(',',':')).encode('utf-8')
                     if getattr(socket,'url',None) and socket.url.path.startswith('/api/metadata/'):
                         await asyncio.wait_for(socket.send_text(header.decode('utf-8')),timeout=5)
-                    else:await asyncio.wait_for(socket.send_bytes(struct.pack('!I',len(header))+header+jpeg),timeout=5)
+                    elif jpeg:await asyncio.wait_for(socket.send_bytes(struct.pack('!I',len(header))+header+jpeg),timeout=5)
                     previous = key
             # Also receive disconnects when an idle camera has no outgoing frames.
             try:

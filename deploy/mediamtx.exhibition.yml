@@ -1,0 +1,34 @@
+logLevel: warn
+authMethod: internal
+authInternalUsers:
+  - user: exhibition_gateway
+    pass: overridden-by-compose
+    permissions:
+      - action: api
+      - action: read
+        path: ~^cam0[1-3]$
+      - action: publish
+        path: ~^cam0[1-3]$
+api: true
+apiAddress: :9997
+rtsp: true
+rtspAddress: :8554
+rtspTransports: [tcp]
+rtspAuthMethods: [basic]
+rtmp: false
+webrtc: true
+webrtcAddress: :8889
+webrtcIPsFromInterfaces: false
+webrtcLocalUDPAddress: :8190
+webrtcLocalTCPAddress: :8190
+hls: false
+srt: false
+moq: false
+pathDefaults:
+  source: publisher
+  overridePublisher: false
+  record: false
+paths:
+  cam01: {}
+  cam02: {}
+  cam03: {}

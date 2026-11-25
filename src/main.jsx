@@ -11,7 +11,8 @@ import {
   CircleHelp,
 } from 'lucide-react';
 
-import {cameras as standardCameras, exhibitionCameras} from './data';
+import {cameras as standardCameras, exhibitionCameras, interactiveCameras} from './data';
+import ExhibitionJoin from './ExhibitionJoin';
 import MultiCameraMonitor from './MultiCameraMonitor';
 import EventPanel from './EventPanel';
 import LoginPage from './LoginPage';
@@ -49,8 +50,8 @@ function read(key, fallback) {
   }
 }
 
-function App({onLogout, user, exhibition = false}) {
-  const cameras = exhibition ? exhibitionCameras : standardCameras;
+function App({onLogout, user, exhibition = false, interactive = false}) {
+  const cameras = interactive ? interactiveCameras : exhibition ? exhibitionCameras : standardCameras;
   const [operator, setOperator] = useState(false);
   const [setupOpen, setSetupOpen] = useState(false);
   const canOperate = !exhibition || operator;
@@ -387,7 +388,7 @@ function App({onLogout, user, exhibition = false}) {
                   <Stat label="현재 미착용 추정 인원 합계" value={totals.active ? totals.violations : '—'} unit="명" detail="각 카메라의 명시적 미착용 증거 기준" warning icon={<ShieldCheck/>}/>
                   <Stat label="오늘 누적 이벤트" value={summary?.today ?? '—'} unit="건" detail="전체 카메라 · 한국 시간 기준" warning icon={<Bell/>}/>
                 </div>
-                <MultiCameraMonitor jump={jump} onTotals={setTotals} cameras={cameras} exhibition={exhibition} canOperate={canOperate}/>
+                <MultiCameraMonitor interactive={interactive} jump={jump} onTotals={setTotals} cameras={cameras} exhibition={exhibition} canOperate={canOperate}/>
                 {!exhibition && <button className="text-btn" onClick={() => fileRef.current?.click()}><Upload size={15}/>파일 미리보기</button>}
                 {video && <div className="local-preview"><video controls src={video.url}/><p>로컬 파일 미리보기 · AI 분석 없음</p><button onClick={() => setVideo(null)}>미리보기 닫기</button></div>}
               </>}
@@ -465,7 +466,7 @@ function Root() {
     try { await accountRequest('/api/auth/logout', {method:'POST'}); setMessage(''); setUser(null); return true; }
     catch(e) {setMessage(e.message); return false;}
   }
-  if (runtime?.exhibition) return <App exhibition/>;
+  if (runtime?.exhibition) return <App exhibition interactive={Boolean(runtime.interactive)}/>;
   if (loading) return <div className="login-page">서비스 연결 확인 중…</div>;
   if (!user || user.must_change_password) return <LoginPage user={user} localDemo={runtime?.local_demo} onLogin={result=>{setMessage('');setUser(result);}} onLogout={()=>setUser(null)}/>;
   if (window.location.pathname === '/admin/accounts') {
@@ -474,8 +475,9 @@ function Root() {
   }
   return <>{runtime?.local_demo && <div className="local-demo-banner" role="status">LOCAL DEMO · 운영 계정과 분리된 로컬 관제 화면 · YOLO {runtime.yolo_state === 'missing' ? '모델 없음' : runtime.yolo_state}</div>}{user.role === 'system' && <div className="session-bar"><span>{user.employee_id}</span><a href="/admin/accounts">관리자 계정 관리</a></div>}<App onLogout={logout} user={user}/></>;
 }
+const join = /^\/exhibition\/join\/([^/]+)\/?$/.exec(window.location.pathname);
 createRoot(document.getElementById('root')).render(
   <React.StrictMode>
-    <Root />
+    {join ? <ExhibitionJoin camera={join[1]}/> : <Root />}
   </React.StrictMode>
 );

@@ -12,3 +12,9 @@ export const exhibitionCameras = [
 
 // CAM-01은 서버의 CAMERA_SOURCE에 설정한 아이폰 영상에 연결됩니다.
 // 이벤트와 현재 감지 상태는 백엔드 API에서 조회합니다.
+
+export const interactiveCameras = [
+  ...cameras.slice(0, 3).map(camera => ({...camera, input: 'visitor', name: '관객 카메라 체험'})),
+  {id: 'CAM-04', input: 's3', name: '건설장비 착용'},
+  {id: 'CAM-05', input: 's3', name: '건설장비 미착용'},
+];

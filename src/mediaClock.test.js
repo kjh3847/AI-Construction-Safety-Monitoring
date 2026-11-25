@@ -18,3 +18,13 @@ test('unsigned RTP rollover is matched exactly and buffer stays bounded',()=>{
   for(let i=0;i<100;i++)buffer.add(meta(i),100);
   assert.ok(buffer.frames.size<=60);
 });
+
+test('visitor overlay uses only fresh RTP frames at or before playback',()=>{
+  const buffer=new MetadataBuffer('CAM-01');
+  const meta={camera_id:'CAM-01',source_generation:'new',media_clock:{rtp_timestamp:0xfffffff0}};
+  buffer.add(meta,1000);
+  assert.equal(buffer.recent(40,1100),meta);
+  assert.equal(buffer.recent(0xffffffef,1100),null);
+  assert.equal(buffer.recent(40000,1100),null);
+  assert.equal(buffer.recent(40,1800),null);
+});
